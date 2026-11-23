@@ -36,7 +36,8 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 tarball="kairos-dist-$version.tar.gz"
-(cd "$repo_dir" && gh release download "$tag" --pattern "$tarball" --dir "$tmp")
+repo=${GH_REPO:-hackclub/kairos}
+curl -fsSL --retry 3 -o "$tmp/$tarball" "https://github.com/$repo/releases/download/$tag/$tarball"
 
 # Only plain folders and files, nothing that could escape the folder.
 tar -tvzf "$tmp/$tarball" | while read -r mode _ _ _ _ name; do
