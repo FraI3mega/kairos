@@ -91,27 +91,26 @@ pub fn check(st: &St, bucket: Bucket, key: &str) -> Result<(), AppError> {
     st.limits.check(bucket, key).map_err(too_many)
 }
 
-/// The peer address, or the last X-Forwarded-For hop when the peer is a trusted proxy.
+/// The peer address, or behind trusted proxies the nearest X-Forwarded-For hop that isn't one of them.
 pub fn client_ip(ext: &Extensions, headers: &HeaderMap, trusted: &[Cidr]) -> IpAddr {
-    let peer = ext
+    let mut ip = ext
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip())
         .or_else(|| ext.get::<MockConnectInfo<SocketAddr>>().map(|c| c.0.ip()))
         .unwrap_or(IpAddr::V6(Ipv6Addr::UNSPECIFIED));
-    if !trusted.iter().any(|c| c.contains(peer)) {
-        return peer;
+    let hops = headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(','));
+    for hop in hops.rev() {
+        if !trusted.iter().any(|c| c.contains(ip)) {
+            break;
+        }
+        match hop.trim().parse() {
+            Ok(next) => ip = next,
+            Err(_) => break,
+        }
     }
-    headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .last()
-        .and_then(|s| s.trim().parse::<IpAddr>().ok())
-        .unwrap_or(peer)
+    ip
 }
 
-/// IPv6 clients usually own a whole /64, so they share one key.
 pub fn ip_key(ip: IpAddr) -> String {
     match ip {
         IpAddr::V4(v4) => v4.to_string(),
@@ -157,6 +156,28 @@ mod tests {
         assert_eq!(client_ip(&ext, &h, &[]).to_string(), "172.18.0.1");
         let trusted = [Cidr::parse("172.16.0.0/12").unwrap()];
         assert_eq!(client_ip(&ext, &h, &trusted).to_string(), "1.2.3.4");
+        h.insert("x-forwarded-for", "nonsense".parse().unwrap());
+        assert_eq!(client_ip(&ext, &h, &trusted).to_string(), "172.18.0.1");
         assert_eq!(ip_key("2001:db8:1:2:3:4:5:6".parse().unwrap()), "2001:db8:1:2::/64");
+    }
+
+    #[test]
+    fn forwarded_through_two_proxies() {
+        let mut ext = Extensions::new();
+        ext.insert(ConnectInfo("10.244.1.47:5000".parse::<SocketAddr>().unwrap()));
+        let trusted = [Cidr::parse("10.244.0.0/16").unwrap(), Cidr::parse("104.16.0.0/13").unwrap()];
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-for", "6.6.6.6, 1.2.3.4".parse().unwrap());
+        h.append("x-forwarded-for", "104.18.28.137".parse().unwrap());
+        assert_eq!(client_ip(&ext, &h, &trusted).to_string(), "1.2.3.4");
+
+        let mut direct = HeaderMap::new();
+        direct.append("x-forwarded-for", "6.6.6.6, 104.18.28.137".parse().unwrap());
+        direct.append("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip(&ext, &direct, &trusted).to_string(), "1.2.3.4");
+
+        let mut only_proxies = HeaderMap::new();
+        only_proxies.append("x-forwarded-for", "104.18.28.137".parse().unwrap());
+        assert_eq!(client_ip(&ext, &only_proxies, &trusted).to_string(), "104.18.28.137");
     }
 }
