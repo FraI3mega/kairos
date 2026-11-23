@@ -6,8 +6,8 @@ COPY . .
 RUN cargo build --release --locked -p kairos-server -p kairos-release
 
 # The client release this server hands out for installs and updates. Its signature is checked before it goes in.
-ARG RELEASE_REPO=ObayM/kairos
-ARG RELEASE_TAG=v0.1.9
+ARG RELEASE_REPO=hackclub/kairos
+ARG RELEASE_TAG=v0.1.10
 RUN GH_REPO=$RELEASE_REPO KAIROS_RELEASE=target/release/kairos-release KAIROS_DOWNLOADS=/downloads \
     sh deploy/publish-release.sh $RELEASE_TAG
 
