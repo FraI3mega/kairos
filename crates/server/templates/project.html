@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block nav %}
+  {% if base.user.is_some() %}
+    <a href="/me">Dashboard</a><a href="/leaderboards">Leaderboards</a>
+  {% else %}
+    <a href="/leaderboards">Leaderboards</a><a class="btn light px" href="/">Get Kairos</a>
+  {% endif %}
+{% endblock %}
+
+{% block head %}
+  <div class="head">
+    <div class="who">
+      <svg class="av" viewBox="0 0 5 5" shape-rendering="crispEdges" aria-hidden="true">{{ avatar|safe }}</svg>
+      <div>
+        <p class="crumb"><a href="/@{{ username }}">{{ name }}</a> / project</p>
+        <h1>{{ project }}</h1>
+        <div class="big">{{ total }}</div>
+        <p class="sub">Focus time on this project{% if !first.is_empty() %} · active {{ first }}{% if first != last %} to {{ last }}{% endif %}{% endif %}</p>
+      </div>
+    </div>
+    <ul class="hstats">
+      <li class="px"><span>This week</span><b>{{ week }}</b></li>
+      <li class="px"><span>Agents ran</span><b>{{ agent }}</b></li>
+      <li class="px"><span>Commits</span><b>{{ commit_count }}</b></li>
+    </ul>
+  </div>
+{% endblock %}
+
+{% block body %}
+  {% if own %}
+    <div class="hint px owner">
+      {% if hidden %}
+        <p>Only you can see this page, because the project is hidden. Showing it puts it on your public profile.</p>
+      {% else if !public %}
+        <p>Only you can see this page, because your profile is private.</p>
+      {% else %}
+        <p>This page is public. Hide the project to keep its name and numbers off your profile.</p>
+      {% endif %}
+      <form method="post" action="/settings/projects">
+        <input type="hidden" name="csrf" value="{{ base.csrf }}">
+        <input type="hidden" name="project" value="{{ project }}">
+        <input type="hidden" name="next" value="{{ path }}">
+        {% if hidden %}
+          <input type="hidden" name="hidden" value="0"><button class="btn light px">Show this project</button>
+        {% else %}
+          <input type="hidden" name="hidden" value="1"><button class="btn light px">Hide this project</button>
+        {% endif %}
+      </form>
+    </div>
+  {% endif %}
+  {% if let Some(r) = repo %}
+    <p class="repo"><a href="{{ r }}" rel="noopener noreferrer nofollow">{{ r }}</a></p>
+  {% endif %}
+  <section>
+    <h2>This week</h2>
+    <div class="card px">
+      {% call m::week(bars, true) %}{% endcall %}
+      <p class="legend"><span><i class="f"></i>Focus time</span><span><i class="a"></i>Agents ran</span></p>
+    </div>
+  </section>
+  <section>
+    <h2>Last 30 days</h2>
+    <div class="days">
+      {% for d in days %}
+        <div title="{{ d.title }}" style="height:{{ d.pct }}%"></div>
+      {% endfor %}
+    </div>
+    <div class="axis"><span>{{ first_label }}</span><span>today</span></div>
+  </section>
+  <section>
+    <h2>The past year</h2>
+    <div class="card px">
+      <div class="heat">{% for c in heat %}<i class="h{{ c.level }}" title="{{ c.title }}"></i>{% endfor %}</div>
+      <p class="legend"><span>Less</span><span class="hl"><i class="h0"></i><i class="h1"></i><i class="h2"></i><i class="h3"></i><i class="h4"></i></span><span>More</span></p>
+    </div>
+  </section>
+  <section class="grid2">
+    {% call m::rows("Kind of work", classes) %}{% endcall %}
+    {% if let Some(t) = tools %}
+      {% call m::rows("AI tools", t) %}{% endcall %}
+    {% else %}
+      <div></div>
+    {% endif %}
+  </section>
+  {% if !languages.is_empty() %}
+    <section class="grid2">
+      {% call m::rows("Languages", languages) %}{% endcall %}
+      <div></div>
+    </section>
+  {% endif %}
+  <section>
+    <h2>Recent commits</h2>
+    {% if commits.is_empty() %}
+      <p class="empty px">No commits yet. They show up here once Kairos sees you commit in this project.</p>
+    {% else %}
+      <ul class="commits card px">
+        {% for c in commits %}
+          <li>
+            {% if let Some(u) = c.url %}
+              <a href="{{ u }}" rel="noopener noreferrer nofollow"><code>{{ c.short }}</code></a>
+            {%- else %}
+              <code>{{ c.short }}</code>
+            {%- endif -%}
+            <span class="when">{{ c.when }}</span><span class="diff">{{ c.files }} {% if c.files == 1 %}file{% else %}files{% endif %} <b class="add">+{{ c.added }}</b> <b class="del">-{{ c.removed }}</b></span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ base.dash_js }}" nonce="{{ base.nonce }}"></script>
+{% endblock %}

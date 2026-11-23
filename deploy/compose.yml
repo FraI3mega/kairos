@@ -1,0 +1,43 @@
+name: kairos
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kairos
+      POSTGRES_DB: kairos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kairos"]
+      interval: 5s
+      retries: 20
+  app:
+    build:
+      context: .
+    image: kairos-server:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://kairos:${POSTGRES_PASSWORD}@db:5432/kairos
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+      KAIROS_AUTH: ${KAIROS_AUTH:-hca}
+      KAIROS_ALLOW_MOCK_AUTH: ${KAIROS_ALLOW_MOCK_AUTH:-0}
+      HCA_URL: ${HCA_URL:-https://auth.hackclub.com}
+      HCA_CLIENT_ID: ${HCA_CLIENT_ID:-}
+      HCA_CLIENT_SECRET: ${HCA_CLIENT_SECRET:-}
+      KAIROS_TRUSTED_PROXY: ${KAIROS_TRUSTED_PROXY:-172.16.0.0/12}
+      KAIROS_DOWNLOADS: /downloads
+      KAIROS_CHROME_EXTENSION_URL: ${KAIROS_CHROME_EXTENSION_URL:-}
+      KAIROS_FIREFOX_EXTENSION_URL: ${KAIROS_FIREFOX_EXTENSION_URL:-}
+      KAIROS_GITHUB_TOKEN: ${KAIROS_GITHUB_TOKEN:-}
+      KAIROS_SELF_DELETE: ${KAIROS_SELF_DELETE:-}
+    volumes:
+      - ${KAIROS_DOWNLOADS_DIR:-/srv/kairos/downloads}:/downloads:ro
+    ports:
+      - "127.0.0.1:8790:8787"
+volumes:
+  db:

@@ -1,0 +1,28 @@
+[package]
+name = "kairos-core"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[lib]
+name = "kairos_core"
+
+[features]
+client = ["dep:reqwest", "dep:flate2"]
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
+walkdir = "=2.5.0"
+anyhow = "=1.0.104"
+blake3 = "=1.8.7"
+dirs = "=6.0.0"
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+ed25519-dalek = "=3.0.0"
+sha2 = "=0.11.1"
+semver = "=1.0.28"
+base64 = "=0.22.1"
+getrandom = "=0.3.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"], optional = true }
+flate2 = { version = "=1.1.11", optional = true }

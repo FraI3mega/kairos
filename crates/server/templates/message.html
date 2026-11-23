@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block body %}
+  <div class="solo">
+    <div class="card px">
+      <h1>{{ heading }}</h1>
+      <p>{{ text }}</p>
+      <form action="{% if base.user.is_some() %}/me{% else %}/{% endif %}"><button class="btn px">{% if base.user.is_some() %}Open your dashboard{% else %}Go home{% endif %}</button></form>
+    </div>
+  </div>
+{% endblock %}

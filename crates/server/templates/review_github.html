@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <p class="crumb"><a href="/review">Review</a> / <a href="/review/@{{ username }}?{{ back }}">@{{ username }}</a> / GitHub check</p>
+      <h1>GitHub check</h1>
+      <p class="sub">
+        Commits Kairos devices saw for {{ name }}, {{ range }}
+        {%- if filtered %} · {{ projects_value }}{% endif -%}
+        , compared with what GitHub has.
+      </p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section>
+    <p class="muted">Each repo is asked for the commits a device saw, by sha, and for what reached its default branch in this window. Nothing is stored. Not on GitHub can mean the commit was never pushed, its history was rewritten (amended, rebased) or it went to a different repo. Days run midnight to midnight in {{ timezone }}.</p>
+    {% if !configured %}
+      <p class="empty px">The GitHub check needs <code>KAIROS_GITHUB_TOKEN</code> set on the server (a read-only token). Nothing was sent to GitHub.</p>
+    {% else %}
+      {% if repos.is_empty() %}
+        <p class="empty px">No project active in this window has a GitHub repo.</p>
+      {% endif %}
+      {% if repos_capped %}
+        <p class="muted small">Only the {{ max_repos }} most recently active repos are checked.</p>
+      {% endif %}
+      {% if commits_capped %}
+        <p class="muted small">Only the newest {{ max_commits }} commits in this window are checked.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+  {% for r in repos %}
+    <section>
+      <h2><a href="{{ r.url }}" rel="noopener noreferrer nofollow">{{ r.name }}</a></h2>
+      {% if let Some(e) = r.error %}
+        <p class="empty px"><span class="flag">Can't be read</span> {{ e }}.</p>
+      {% else %}
+        <p class="muted">{{ r.matched }} on GitHub with matching sizes, {{ r.differ }} on GitHub with different sizes, {{ r.missing }} not on GitHub.</p>
+        {% if r.rows.is_empty() %}
+          <p class="empty px">No commits seen by a device in this window.</p>
+        {% else %}
+          <ul class="commits card px">
+            {% for c in r.rows %}
+              <li>
+                <a href="{{ c.url }}" rel="noopener noreferrer nofollow"><code>{{ c.short }}</code></a><span class="when">{{ c.when }} · {{ c.project }} {% if c.missing %}<span class="flag">{{ c.label }}</span>{% else %}<span class="tag">{{ c.label }}</span>{% endif -%}
+                </span><span class="diff">Kairos <b class="add">+{{ c.added }}</b> <b class="del">-{{ c.removed }}</b>
+                  {%- if let Some((a, d)) = c.github %}<span class="ag">GitHub +{{ a }} -{{ d }}</span>{% endif -%}
+                </span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <h3>On GitHub but not seen by Kairos</h3>
+        {% if r.unseen.is_empty() %}
+          <p class="empty px">No default-branch commits in this window beyond the ones above.</p>
+        {% else %}
+          <ul class="commits card px">
+            {% for c in r.unseen %}
+              <li><a href="{{ c.url }}" rel="noopener noreferrer nofollow"><code>{{ c.short }}</code></a><span class="when">Date git claims: {{ c.date }}{% if let Some(w) = c.who %} · {{ w }}{% endif %}</span><span class="diff"><b class="add">+{{ c.added }}</b> <b class="del">-{{ c.removed }}</b></span></li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <p class="muted small">
+          Default-branch commits with a git date in this window. The date is whatever the committer set, so it can be wrong in either direction.
+          {%- if r.history_more %} There are more than {{ max_history }} of them, only the newest {{ max_history }} were checked.{% endif %}
+        </p>
+      {% endif %}
+    </section>
+  {% endfor %}
+{% endblock %}

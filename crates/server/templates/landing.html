@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en" data-base="{{ base.public_url }}">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kairos</title>
+<meta name="description" content="Kairos tracks your focus time while you build with AI. Works with Claude Code, Codex, OpenCode and more.">
+<meta name="theme-color" content="#3a33a3">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Kairos: track your focus time">
+<meta property="og:description" content="Kairos tracks your focus time while you build with AI. Works with Claude Code, Codex, OpenCode and more.">
+<meta property="og:image" content="{{ base.public_url }}/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%209%209%22%20fill%3D%22%233a33a3%22%20shape-rendering%3D%22crispEdges%22%3E%3Crect%20x%3D%223%22%20y%3D%220%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%220%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%220%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%221%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%222%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%220%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%223%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%220%22%20y%3D%224%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%224%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%224%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%224%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%220%22%20y%3D%225%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%225%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%225%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%225%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%226%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%226%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%226%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%221%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%226%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%227%22%20y%3D%227%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%228%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%224%22%20y%3D%228%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3Crect%20x%3D%225%22%20y%3D%228%22%20width%3D%221%22%20height%3D%221%22%20opacity%3D%22.42%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="{{ base.fonts_css }}">
+<link rel="stylesheet" href="{{ base.landing_css }}">
+{% include "banner.html" %}
+<header class="hero">
+  <div class="wrap">
+    <nav class="nav" aria-label="Main">
+      <a class="brand" href="/"><svg class="mark" data-mark aria-hidden="true"></svg>kairos</a>
+      <div class="links"><a href="#how">How it works</a><a href="#faq">FAQ</a><a class="btn px" href="/auth/login">Sign in</a></div>
+    </nav>
+    <div class="hero-grid">
+      <div>
+        <h1>Track your focus time</h1>
+        <p class="sub">Kairos measures the time you spend writing prompts, reading replies, editing code and testing while you build with AI.</p>
+        <div class="install">
+          <div class="tabs" role="tablist" aria-label="Your system">
+            <button role="tab" data-os="win" aria-selected="true">Windows</button>
+            <button role="tab" data-os="mac" aria-selected="false">macOS</button>
+            <button role="tab" data-os="linux" aria-selected="false">Linux</button>
+          </div>
+          <div class="cmd px"><span class="ps">&gt;</span><code>irm {{ base.public_url }}/install.ps1 | iex</code><button type="button" class="copy">copy</button></div>
+        </div>
+        <p class="small">Free and open source (AGPL-3.0). Made for Hack Club.</p>
+      </div>
+      <div class="dial-box">
+        <div class="dial" id="dial" tabindex="0" role="img" aria-label="A sample day drawn as a pixel clock. Colored cells are focus time: typing, reading, editing and testing. Outlined cells are the agent working on its own. Move across the clock to read any moment.">
+          <svg id="dial-svg" viewBox="0 0 25 25" shape-rendering="crispEdges" aria-hidden="true"></svg>
+          <div class="dial-mid" aria-live="polite"><b id="d-time">14:20</b><span id="d-label">editing code</span><em id="d-state">focus time</em></div>
+        </div>
+        <p class="dial-note" id="d-note"></p>
+      </div>
+    </div>
+  </div>
+</header>
+<canvas class="drip" aria-hidden="true"></canvas>
+<main>
+  <section class="sec" id="counts">
+    <div class="wrap rule-grid">
+      <div>
+        <h2>See where your time goes</h2>
+        <p>Kairos sorts every session by what you were doing, so you can see how long you spent prompting, reading, editing and testing.</p>
+        <p>Time the agent spends working on its own shows up separately as agent time.</p>
+      </div>
+      <ol class="log" data-ui aria-label="A 35 minute session">
+        <li class="typing"><time>14:02</time><span>Typing a prompt</span><span class="t"><b>1m 10s</b><em>focus</em></span></li>
+        <li class="reading"><time>14:03</time><span>Reading the plan it wrote</span><span class="t"><b>2m 30s</b><em>focus</em></span></li>
+        <li class="ag"><time>14:06</time><span>Agent working, you're on your phone</span><span class="t"><b>18m</b><em>agent time</em></span></li>
+        <li class="reading"><time>14:24</time><span>Reading what it changed</span><span class="t"><b>3m</b><em>focus</em></span></li>
+        <li class="editing"><time>14:27</time><span>Fixing a line yourself</span><span class="t"><b>4m</b><em>focus</em></span></li>
+        <li class="testing"><time>14:31</time><span>Playing the level to check it</span><span class="t"><b>6m</b><em>focus</em></span></li>
+        <li class="sum"><span>Your focus time</span><span class="t"><b>16m 40s</b><em>in a 35 minute session</em></span></li>
+      </ol>
+    </div>
+  </section>
+  <section class="sec" id="how">
+    <div class="wrap">
+      <div class="how-head">
+        <h2>How it works</h2>
+        <p>Just do the first 2 steps and Kairos starts working automatically!</p>
+      </div>
+      <div class="how-grid" id="how-grid">
+        <div class="steps" role="tablist" aria-label="Steps">
+          <button class="step px on" role="tab" id="t1" aria-controls="p1" aria-selected="true"><b>Install it</b><span>Paste one line into your terminal.</span><i class="bar"><i></i></i></button>
+          <button class="step px" role="tab" id="t2" aria-controls="p2" aria-selected="false"><b>Sign in with Hack Club</b><i class="bar"><i></i></i></button>
+          <button class="step px" role="tab" id="t3" aria-controls="p3" aria-selected="false"><b>Build like you normally do</b><span>Use Claude Code, Codex, Cursor or whatever you like.</span><i class="bar"><i></i></i></button>
+          <button class="step px" role="tab" id="t4" aria-controls="p4" aria-selected="false"><b>See your hours</b><span>Your dashboard shows your focus time per project and what you were doing.</span><i class="bar"><i></i></i></button>
+        </div>
+        <div class="screen">
+          <figure class="panel on" id="p1" role="tabpanel" aria-labelledby="t1">
+            <figcaption class="vcap"><span>your computer</span><span>07:10</span></figcaption>
+            <div class="pic px" data-hour="7.2">
+              <canvas aria-hidden="true"></canvas>
+              <div class="ui term term-install px" data-ui>
+                <p><span class="y">&gt;</span> irm {{ base.host }}/install.ps1 | iex</p>
+                <p class="d">checking the download ... ok</p>
+                <p class="d">installed for this user, no admin</p>
+                <span class="prog"><i></i></span>
+                <p>kairos starts when you log in</p>
+              </div>
+            </div>
+          </figure>
+          <figure class="panel" id="p2" role="tabpanel" aria-labelledby="t2">
+            <figcaption class="vcap"><span>your browser</span><span>07:12</span></figcaption>
+            <div class="pic px" data-hour="9.4">
+              <canvas aria-hidden="true"></canvas>
+              <div class="ui auth px" data-ui>
+                <p class="url">{{ base.host }}</p>
+                <b>Connect this computer</b>
+                <p class="note">Sign in once and Kairos does the rest.</p>
+                <span class="hcb px">Sign in with Hack Club</span>
+              </div>
+            </div>
+          </figure>
+          <figure class="panel" id="p3" role="tabpanel" aria-labelledby="t3">
+            <figcaption class="vcap"><span>claude code · codex · cursor</span><span>14:20</span></figcaption>
+            <div class="pic px" data-hour="14.3">
+              <canvas aria-hidden="true"></canvas>
+              <div class="ui term term-prompt px" data-ui>
+                <p><span class="y">&gt;</span> make the jump feel less floaty</p>
+                <p class="m">I'll make the fall faster and cut the jump short when you let go.</p>
+                <p class="d">● edit player.gd  +6 -2</p>
+                <p class="d">● run the game</p>
+              </div>
+              <div class="ui slog px" data-ui>
+                <div class="tl" id="vstrip"></div>
+                <p>focus 9m · agent 14m</p>
+              </div>
+            </div>
+          </figure>
+          <figure class="panel" id="p4" role="tabpanel" aria-labelledby="t4">
+            <figcaption class="vcap"><span>{{ base.host }}/me</span><span>18:50</span></figcaption>
+            <div class="pic px" data-hour="18.85" data-sx=".66">
+              <canvas aria-hidden="true"></canvas>
+              <div class="ui dash px" data-ui>
+                <span class="k">This week</span>
+                <b>11h 40m</b>
+                <div id="vdash"></div>
+              </div>
+            </div>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="sec" id="private">
+    <div class="wrap">
+      <h2>What Kairos sends</h2>
+      <p class="lead">Just enough to add up your hours. Your code and prompts stay on your computer.</p>
+      <div class="cols">
+        <div class="frame px">
+          <h3>Sent to your dashboard</h3>
+          <ul>
+            <li>
+              <span class="ico-box" data-ico="chart" data-c="reading"></span>
+              <div>When you worked and for how long</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="chat" data-c="reading"></span>
+              <div>How many words you typed</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="hash" data-c="reading"></span>
+              <div>The project name, from your git remote or folder</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="pencil" data-c="reading"></span>
+              <div>Which files in the project you worked on or committed</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="eye" data-c="reading"></span>
+              <div>Whether you were in an editor, a terminal, a browser or an AI app</div>
+            </li>
+          </ul>
+        </div>
+        <div class="frame px">
+          <h3>Stays on your computer</h3>
+          <ul>
+            <li>
+              <span class="ico-box" data-ico="lock" data-c="ink"></span>
+              <div>Your code</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="lock" data-c="ink"></span>
+              <div>Your prompts and the agent's replies</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="lock" data-c="ink"></span>
+              <div>Window titles, tab addresses and where your folders are</div>
+            </li>
+            <li>
+              <span class="ico-box" data-ico="lock" data-c="ink"></span>
+              <div>Your screen. Kairos doesn't take screenshots.</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="sec last" id="faq">
+    <div class="wrap faq-wrap">
+      <h2>Questions</h2>
+      <div>
+        <details class="px" open>
+          <summary>What counts as focus time?</summary>
+          <p>Writing prompts, reading replies, editing code and testing your app. It counts in your AI tools, editor and terminal. When the agent works while you're away, that's agent time instead.</p>
+        </details>
+        <details class="px">
+          <summary>Can I pause it?</summary>
+          <p>Yes. The clock icon in your tray or menu bar pauses Kairos for 30 minutes, an hour or until tomorrow, and you can resume whenever you like. You can also run <code>kairos pause</code>.</p>
+        </details>
+        <details class="px">
+          <summary>Can I keep a folder private?</summary>
+          <p>Yes. Run <code>kairos exclude</code> in that folder and Kairos won't record anything from it, not even the time. <code>kairos exclude --list</code> shows what you've excluded.</p>
+        </details>
+        <details class="px">
+          <summary>How do I remove it?</summary>
+          <p>Run <code>kairos uninstall</code>.</p>
+        </details>
+        <details class="px">
+          <summary>Is it open source?</summary>
+          <p>Yes, under AGPL-3.0, so you can <a href="https://github.com/hackclub/kairos">read exactly what it does</a> on your computer.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+<canvas class="drip up" aria-hidden="true"></canvas>
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <h2>Start tracking your focus time</h2>
+      <div class="install">
+        <div class="tabs" role="tablist" aria-label="Your system">
+          <button role="tab" data-os="win" aria-selected="true">Windows</button>
+          <button role="tab" data-os="mac" aria-selected="false">macOS</button>
+          <button role="tab" data-os="linux" aria-selected="false">Linux</button>
+        </div>
+        <div class="cmd px"><span class="ps">&gt;</span><code>irm {{ base.public_url }}/install.ps1 | iex</code><button type="button" class="copy">copy</button></div>
+      </div>
+    </div>
+    <div class="bigword" aria-hidden="true"><svg data-mark></svg>kairos</div>
+    <div class="foot-row"><span>Kairos is Greek for the right moment.</span><span>AGPL-3.0 · made for Hack Club</span></div>
+  </div>
+</footer>
+<script src="{{ base.landing_js }}" nonce="{{ base.nonce }}"></script>

@@ -1,0 +1,38 @@
+[package]
+name = "kairos-server"
+version = "0.1.9"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[lib]
+name = "kairos_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kairos-server"
+path = "src/main.rs"
+
+[dependencies]
+kairos-core = { path = "../core" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
+chrono-tz = "=0.10.4"
+anyhow = "=1.0.104"
+blake3 = "=1.8.7"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "form", "tokio", "matched-path"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4"] }
+deadpool-postgres = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
+getrandom = "0.3"
+askama = "=0.16.1"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "std"] }
+ring = "=0.17.14"
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>{{ name }}</h1>
+      <div class="big" data-live="week">{{ snap.week }}</div>
+      <p class="sub">Focus time this week · {{ all }} all time</p>
+    </div>
+    <div class="dialbox">
+      <div class="dial" id="dialbox" role="img" aria-label="Today as a pixel clock. Colored cells are focus time, by kind of work.">
+        <svg id="dial" viewBox="0 0 25 25" shape-rendering="crispEdges" aria-hidden="true"></svg>
+        <div class="mid"><b id="dial-b">{{ snap.today }}</b><span id="dial-s">focus time today</span></div>
+      </div>
+      <p class="agentline">Your agents ran <b data-live="agent">{{ snap.agent }}</b> today</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  {% if let Some(c) = connected %}<p class="hint px">{{ c }}</p>{% endif %}
+  <p class="hint px" id="tzhint" data-tz="{{ timezone }}"{% if !timezone_set %} data-auto="1" data-csrf="{{ base.csrf }}"{% endif %} hidden>Your days are counted in {{ timezone }}, but your browser is in <b id="tzname"></b>. <a href="/settings#profile">Change your timezone</a></p>
+  {% if devices.is_empty() %}
+    <section id="setup">
+      <h2>Set up your first computer</h2>
+      <div class="card px setup">
+        <ol>
+          <li>
+            <b>Install Kairos.</b>
+            <p>Open a terminal and paste one line.</p>
+            <div class="oses">
+              <div>
+                <span>Windows (PowerShell)</span>
+                <div class="cmd"><code>irm {{ base.public_url }}/install.ps1 | iex</code><button type="button" class="copy" hidden>Copy</button></div>
+              </div>
+              <div>
+                <span>macOS and Linux</span>
+                <div class="cmd"><code>curl -fsSL {{ base.public_url }}/install.sh | sh</code><button type="button" class="copy" hidden>Copy</button></div>
+              </div>
+            </div>
+          </li>
+          <li>
+            <b>Connect it to your account.</b>
+            <p>The installer opens your browser and connects this computer for you. If you skipped that, run <code>kairos login</code> any time.</p>
+          </li>
+          <li>
+            <b>Build like you normally do.</b>
+            <p>Kairos starts when you log in and runs in the background. Use your AI tools and this page fills in within a minute or so.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+  {% endif %}
+  <section class="cards">
+    <div class="stat px">
+      <span>Streak</span><b data-live="streak">{{ snap.streak }}</b>
+      <p>15 minutes of focus a day keeps it going.</p>
+    </div>
+    <div class="stat px">
+      <span>Agents ran today</span><b data-live="agent">{{ snap.agent }}</b>
+      <p>Your agents working on their own, next to your focus time.</p>
+    </div>
+    <div class="stat px">
+      <span>Agents ran this week</span><b data-live="agent_week">{{ snap.agent_week }}</b>
+    </div>
+  </section>
+  <section>
+    <h2>This week</h2>
+    <div class="card px">
+      {% call m::week(snap.bars, true) %}{% endcall %}
+      <p class="legend"><span><i class="f"></i>Focus time</span><span><i class="a"></i>Agents ran</span></p>
+    </div>
+  </section>
+  {% include "summary.html" %}
+  <section id="devices">
+    <h2>Devices</h2>
+    {% if devices.is_empty() %}
+      <p class="empty px">No devices yet. Follow the steps at the top to add your first one.</p>
+    {% else %}
+      <ul class="devices">
+        {% for d in devices %}
+          <li class="px">
+            <div class="dev-top"><b>{{ d.name }}</b><span class="seen">{% if d.online %}<i class="dot"></i>Online{% else %}Seen {{ d.seen }}{% endif %}</span></div>
+            <span>{{ d.os }}{% if let Some(v) = d.version %} · v{{ v }}{% endif %} · {{ d.events }} event{% if d.events != 1 %}s{% endif %}</span>
+            {%- if let Some(b) = d.backends %}<span class="mono">{{ b }}</span>{% endif %}
+            <form method="post" action="/settings/devices/revoke">
+              <input type="hidden" name="csrf" value="{{ base.csrf }}">
+              <input type="hidden" name="device_id" value="{{ d.id }}">
+              <button class="btn light px">Disconnect</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script type="application/json" id="snap" nonce="{{ base.nonce }}">{{ snap_json|safe }}</script>
+  <script src="{{ base.dash_js }}" nonce="{{ base.nonce }}"></script>
+{% endblock %}

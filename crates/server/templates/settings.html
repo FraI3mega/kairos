@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>Settings</h1>
+      <p class="sub">Signed in as {{ profile.username }}{% if let Some(e) = profile.email %} · {{ e }}{% endif %}</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  {% if let Some(n) = notice %}
+    <p class="note px" role="status">{{ n }}</p>
+  {% endif %}
+  {% if let Some(e) = error %}
+    <p class="note bad px" role="alert">{{ e }}</p>
+  {% endif %}
+  {% if let Some(k) = new_key %}
+    <section id="editor-new">
+      <h2>Your new editor key</h2>
+      <div class="card px">
+        <p>Copy it now. Kairos only keeps a hash, so it won't be shown again.</p>
+        <pre>[settings]
+api_url = {{ base.public_url }}/api/hackatime/v1
+api_key = {{ k }}</pre>
+        <p class="muted">Put this in <code>~/.wakatime.cfg</code>. The previous key stopped working.</p>
+      </div>
+    </section>
+  {% endif %}
+  <section id="profile">
+    <h2>Profile</h2>
+    <form class="card px form" method="post" action="/settings/profile">
+      <input type="hidden" name="csrf" value="{{ base.csrf }}">
+      <label>Username<input type="text" name="username" value="{{ profile.username }}" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{1,31}" autocomplete="off"></label>
+      <label>Display name<input type="text" name="display_name" value="{{ profile.display_name }}" maxlength="64"></label>
+      <label>Timezone<select name="timezone" id="timezone" data-current="{{ profile.timezone }}">{% for tz in timezones %}<option{% if *tz == profile.timezone %} selected{% endif %}>{{ tz }}</option>{% endfor %}</select></label>
+      <p class="muted small" id="tznote" hidden>Detected <b id="tzdetected"></b> from your browser. Save to use it.</p>
+      <label class="check"><input type="checkbox" name="is_public"{% if profile.is_public %} checked{% endif %}> Public profile at <code>/@{{ profile.username }}</code></label>
+      <label class="check"><input type="checkbox" name="show_ai_tools"{% if profile.show_ai_tools %} checked{% endif %}> Show which AI tools I use on my profile</label>
+      <button class="btn px">Save</button>
+    </form>
+    <p class="muted small">
+      {% match profile.verification_status.as_deref() -%}
+        {%- when Some("verified") %}Hack Club Auth: verified
+        {%- when Some("pending") %}Hack Club Auth: verification pending
+        {%- when Some("needs_submission") %}Hack Club Auth: not verified yet
+        {%- when Some("ineligible") %}Hack Club Auth: not eligible
+        {%- when Some(v) %}Hack Club Auth: verification {{ v }}
+        {%- when None %}Hack Club Auth
+      {%- endmatch %}
+      {%- if let Some(sl) = profile.slack_id %} · Slack {{ sl }}{% endif %}
+    </p>
+  </section>
+  <section id="projects">
+    <h2>Projects</h2>
+    <div class="card px">
+      {% if projects.is_empty() %}
+        <p class="muted">No projects yet.</p>
+      {% else %}
+        <p class="muted">Hidden projects still count toward your totals, but their names don't show on your public profile.</p>
+        <p class="muted">Same project under two names, like a folder on one computer and its repo on another? Merge one into the other and their time counts together. You can unmerge any time.</p>
+        <ul class="list">
+          {% for p in projects %}
+            <li>
+              <span class="n">
+                {%- if let Some(u) = p.repo_url -%}
+                  <a href="{{ u }}" rel="noopener noreferrer nofollow">{{ p.id }}</a>
+                {%- else -%}
+                  {{ p.id }}
+                {%- endif -%}
+              </span>
+              {% if merge_targets.len() > 1 %}
+                <form method="post" action="/settings/projects/merge" class="inline">
+                  <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                  <input type="hidden" name="from" value="{{ p.id }}">
+                  <select name="into" required aria-label="Merge {{ p.id }} into">
+                    <option value="" selected disabled>Merge into…</option>
+                    {% for t in merge_targets %}
+                      {% if t.as_str() != p.id.as_str() %}
+                        <option>{{ t }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select><button class="btn light px">Merge</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/settings/projects">
+                <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                <input type="hidden" name="project" value="{{ p.id }}">
+                {% if p.hidden %}
+                  <input type="hidden" name="hidden" value="0"><button class="btn light px">Show</button>
+                {% else %}
+                  <input type="hidden" name="hidden" value="1"><button class="btn light px">Hide</button>
+                {% endif %}
+              </form>
+            </li>
+            {% for m in p.merged %}
+              <li class="sub">
+                <span class="n">{{ m }} <span class="muted small">merged into {{ p.id }}</span></span>
+                <form method="post" action="/settings/projects/unmerge">
+                  <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                  <input type="hidden" name="alias" value="{{ m }}">
+                  <button class="btn light px">Unmerge</button>
+                </form>
+              </li>
+            {% endfor %}
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+  <section id="editor">
+    <h2>Editor key</h2>
+    <div class="card px">
+      <p class="muted">Editor plugins (WakaTime-compatible) add language detail to tracked time.</p>
+      {% if let Some(k) = key %}
+        <p>Current key <code>{{ k.prefix }}…</code> · created {{ k.created }} · last used {{ k.last_used }}</p>
+      {% else %}
+        <p>No editor key yet.</p>
+      {% endif %}
+      <form method="post" action="/settings/key">
+        <input type="hidden" name="csrf" value="{{ base.csrf }}">
+        <button class="btn px">{% if key.is_some() %}Make a new key{% else %}Create a key{% endif %}</button>
+      </form>
+    </div>
+  </section>
+  <section id="devices">
+    <h2>Devices</h2>
+    <div class="card px">
+      {% if devices.is_empty() %}
+        <p class="muted">No devices yet. Run <code>kairos login</code> on your computer.</p>
+      {% else %}
+        <ul class="list">
+          {% for d in devices %}
+            <li>
+              <span class="n">
+                {%- if d.revoked %}<s>{{ d.name }}</s> · disconnected{% else %}{{ d.name }}{% endif -%}
+                <span class="muted small">
+                  {{ d.os }}
+                  {%- if let Some(v) = d.version %} · v{{ v }}{% endif %} · {{ d.last_seen }}</span></span>
+              {% if !d.revoked %}
+                <form method="post" action="/settings/devices/rename" class="inline">
+                  <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                  <input type="hidden" name="device_id" value="{{ d.id }}">
+                  <input type="text" name="name" value="{{ d.name }}" maxlength="64" aria-label="Device name"><button class="btn light px">Rename</button>
+                </form>
+                <form method="post" action="/settings/devices/revoke">
+                  <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                  <input type="hidden" name="device_id" value="{{ d.id }}">
+                  <button class="btn light px">Disconnect</button>
+                </form>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+  <section id="sessions">
+    <h2>Sessions</h2>
+    <div class="card px">
+      <p class="muted">Sign out of Kairos in every browser, including this one.</p>
+      <form method="post" action="/auth/logout-all">
+        <input type="hidden" name="csrf" value="{{ base.csrf }}">
+        <button class="btn px">Sign out everywhere</button>
+      </form>
+    </div>
+  </section>
+  <section id="export">
+    <h2>Your data</h2>
+    <div class="card px">
+      <p class="muted">One JSON file with your profile, devices, projects, credited time, editor heartbeat details and every raw event your devices sent.</p>
+      <a class="btn px" href="/settings/export" download>Download my data</a>
+    </div>
+  </section>
+  {% if self_delete %}
+  <section id="delete">
+    <h2>Delete account</h2>
+    <form class="card px form" method="post" action="/settings/delete">
+      <input type="hidden" name="csrf" value="{{ base.csrf }}">
+      <p>This deletes your account, devices, events and all tracked time right away. It can't be undone.</p>
+      <label>Type <b>{{ profile.username }}</b> to confirm<input type="text" name="confirm" required autocomplete="off"></label><button class="btn danger px">Delete my account</button>
+    </form>
+  </section>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ base.settings_js }}" nonce="{{ base.nonce }}"></script>
+{% endblock %}

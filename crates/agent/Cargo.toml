@@ -1,0 +1,67 @@
+[package]
+name = "kairos-agent"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[[bin]]
+name = "kairosd"
+path = "src/main.rs"
+
+[dependencies]
+kairos-core = { path = "../core", features = ["client"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
+dirs = "=6.0.0"
+walkdir = "=2.5.0"
+anyhow = "=1.0.104"
+notify = "8"
+tiny_http = "=0.12.0"
+base64 = "=0.22.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "=0.31.15"
+wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
+ksni = { version = "=0.3.7", default-features = false, features = ["async-io", "blocking"] }
+x11rb = { version = "=0.14.0", features = ["screensaver"] }
+zbus = "=5.19.0"
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tray-icon = { version = "=0.26.1", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "=0.6.2"
+libc = "=0.2.190"
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication", "NSWindow"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std", "CFArray", "CFBundle", "CFDictionary", "CFNumber", "CFString", "CFURL",
+] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = [
+    "std", "CGEventSource", "CGEventTypes", "CGWindow",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "NSDate", "NSTimer"] }
+
+[dev-dependencies]
+chrono-tz = "=0.10.4"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_UI_Accessibility"] }

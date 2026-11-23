@@ -1,0 +1,4 @@
+/target
+*.bak-*
+deploy/kairos-server
+deploy/.env

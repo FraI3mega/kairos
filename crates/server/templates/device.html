@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block body %}
+  <div class="solo">
+    <div class="card px">
+      {% if let Some(name) = done %}
+        <h1>Computer connected</h1>
+        <p>{{ name }} is connected. You can close this tab.</p>
+        <form action="/me"><button class="btn px">Open your dashboard</button></form>
+      {% else if let Some((name, os)) = device %}
+        <h1>Connect this computer?</h1>
+        {% if let Some(u) = base.user %}
+          <p>Signed in as <b>{{ u.username }}</b>. Check that this code matches the one in your terminal.</p>
+        {% endif %}
+        <div class="code">{{ code }}</div>
+        <p class="muted">{{ name }} · {{ os }}</p>
+        <form method="post" action="/device/approve">
+          <input type="hidden" name="code" value="{{ code }}">
+          <input type="hidden" name="csrf" value="{{ base.csrf }}">
+          <button class="btn px">Connect</button>
+        </form>
+        <p class="muted">Only connect a computer you're sitting at. Kairos sends times, counts, project names and which project files you worked on. It never sends your code, prompts, window titles or URLs.</p>
+      {% else %}
+        <h1>That code doesn't work anymore</h1>
+        <p>It was already used or it's too old. Run <code>kairos login</code> again to get a new one.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

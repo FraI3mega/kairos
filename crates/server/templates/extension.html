@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>The Kairos browser extension</h1>
+      <p class="sub">Testing your app on localhost counts as focus time too. The extension lets Kairos know when you're doing it.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section class="ext">
+    <div class="card px">
+      <h2>Get it</h2>
+      {% if chrome.is_some() || firefox.is_some() %}
+        <div class="stores">
+          {% if let Some(u) = chrome %}<a class="btn px" href="{{ u }}" rel="noopener noreferrer">Chrome Web Store</a>{% endif %}
+          {%- if let Some(u) = firefox %}<a class="btn px" href="{{ u }}" rel="noopener noreferrer">Firefox Add-ons</a>{% endif %}
+        </div>
+        <p class="muted small">The Chrome version also works in Edge, Brave and other Chromium browsers.</p>
+      {% else %}
+        <p><b>Coming soon.</b> The extension is on its way to the Chrome Web Store and Firefox Add-ons. Kairos tracks everything else without it.</p>
+      {% endif %}
+    </div>
+  </section>
+  <section class="grid2">
+    <div>
+      <h2>What it does</h2>
+      <div class="card px">
+        <p>When you switch tabs, the extension checks if it's a project running on your computer or something else. It tells the Kairos app on your computer, and that's it.</p>
+        <p>The time you spend testing your app on localhost then counts as focus time, next to your editor and terminal time.</p>
+      </div>
+    </div>
+    <div>
+      <h2>What stays private</h2>
+      <div class="card px">
+        <p>Nothing about the page itself leaves your computer. No addresses, no page titles, no text you type or read. The extension only talks to the Kairos app on your computer, and it doesn't look inside private windows.</p>
+        <p>It needs the tabs permission only to read the address locally, pick a category and forget it.</p>
+      </div>
+    </div>
+  </section>
+  <section>
+    <h2>Before you install</h2>
+    <div class="card px">
+      <p>Kairos needs to be installed and running first. Look for the pixel clock in your tray or menu bar. If you don't have it yet, the steps are on <a href="/me">your dashboard</a>.</p>
+    </div>
+  </section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block nav %}{% endblock %}
+
+{% block body %}
+  <div class="solo">
+    <div class="card px">
+      <h1>Mock Hack Club Auth</h1>
+      <p class="muted">Pick a test identity. This stands in for auth.hackclub.com on test servers; anyone can sign in as anyone.</p>
+      <div class="presets">
+        {% for p in presets %}
+          <form method="post" action="/mock-auth/oauth/authorize">
+            {% for (k, v) in hidden %}
+              <input type="hidden" name="{{ k }}" value="{{ v }}">
+            {% endfor %}
+            <input type="hidden" name="action" value="approve">
+            <input type="hidden" name="name" value="{{ p.name }}">
+            <input type="hidden" name="email" value="{{ p.email }}">
+            <input type="hidden" name="slack_id" value="{{ p.slack_id }}">
+            <input type="hidden" name="verification_status" value="{{ p.status }}">
+            {% if p.eligible %}
+              <input type="hidden" name="ysws_eligible" value="on">
+            {% endif %}
+            <button class="btn light px">{{ p.label }}</button>
+          </form>
+        {% endfor %}
+      </div>
+      <form class="form" method="post" action="/mock-auth/oauth/authorize">
+        {% for (k, v) in hidden %}
+          <input type="hidden" name="{{ k }}" value="{{ v }}">
+        {% endfor %}
+        <label>Name<input type="text" name="name" maxlength="80" placeholder="Heidi Hacker"></label>
+        <label>Email<input type="email" name="email" maxlength="120" placeholder="heidi@example.com"></label>
+        <label>Slack ID<input type="text" name="slack_id" maxlength="32" placeholder="U0123ABCD"></label>
+        <label>Verification<select name="verification_status"><option>needs_submission</option><option>pending</option><option selected>verified</option><option>ineligible</option></select></label>
+        <label class="check"><input type="checkbox" name="ysws_eligible" checked> YSWS eligible</label>
+        <button class="btn px" name="action" value="approve">Sign in</button> <button class="btn light px" name="action" value="deny">Cancel</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>Leaderboards</h1>
+      <p class="sub">Focus time from people with public profiles. Each person's day follows their own timezone.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <nav class="seg" aria-label="Period"><a href="/leaderboards"{% if !week %} aria-current="page"{% endif %}>Today</a><a href="/leaderboards?period=week"{% if week %} aria-current="page"{% endif %}>Last 7 days</a></nav>
+  {% if boards.pick(*week).is_empty() %}
+    <p class="empty px">Nobody is on the board yet. Your focus time shows up here once you have a public profile.</p>
+  {% else %}
+    <ol class="board">
+      {% for l in boards.pick(*week) %}
+        <li class="px{% if let Some(u) = base.user %}{% if u.username == l.username %} me{% endif %}{% endif %}"><span class="rank">{{ l.rank }}</span><svg class="av" viewBox="0 0 5 5" shape-rendering="crispEdges" aria-hidden="true">{{ l.avatar|safe }}</svg><span class="nm"><a href="/@{{ l.username }}">{{ l.name }}</a><em>@{{ l.username }} · {{ l.streak }}</em></span><b class="t">{{ l.time }}</b></li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+{% endblock %}

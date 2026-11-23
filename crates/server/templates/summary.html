@@ -1,0 +1,28 @@
+{% import "macros.html" as m %}
+<section>
+  <h2>Last 30 days</h2>
+  <div class="days">
+    {% for d in summary.days %}
+      <div title="{{ d.title }}" style="height:{{ d.pct }}%"></div>
+    {% endfor %}
+  </div>
+  <div class="axis"><span>{{ summary.first_label }}</span><span>today</span></div>
+</section>
+<section class="grid2">
+  {% call m::rows("Projects", summary.projects) %}{% endcall %}
+  {% call m::rows("Kind of work", summary.classes) %}{% endcall %}
+</section>
+{% if tools.is_some() || !summary.languages.is_empty() %}
+  <section class="grid2">
+    {% if let Some(t) = tools %}
+      {% call m::rows("AI tools", t) %}{% endcall %}
+    {% else %}
+      <div></div>
+    {% endif %}
+    {% if !summary.languages.is_empty() %}
+      {% call m::rows("Languages", summary.languages) %}{% endcall %}
+    {% else %}
+      <div></div>
+    {% endif %}
+  </section>
+{% endif %}

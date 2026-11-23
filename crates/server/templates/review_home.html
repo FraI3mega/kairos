@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>Review</h1>
+      <p class="sub">Look up anyone's hours, or start from this week's busiest. Every view is written to the audit log.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section>
+    <h2>Find someone</h2>
+    <form class="card px form inline" method="get" action="/review"><input type="text" name="q" value="{{ q }}" placeholder="username prefix, Slack ID, HCA id or email" aria-label="Search"><button class="btn px">Search</button></form>
+    {% if !q.is_empty() %}
+      <div class="card px">
+        {% if users.is_empty() %}
+          <p class="muted">No one matches.</p>
+        {% else %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Slack</th>
+                <th>Trust</th>
+                <th>Joined</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in users %}
+                <tr>
+                  <td>
+                    <a href="/review/@{{ u.username }}">{{ u.username }}</a>
+                    {%- if let Some(d) = u.display_name %} <span class="muted">{{ d }}</span>{% endif %}
+                  </td>
+                  <td>{{ u.slack_id.as_deref().unwrap_or("") }}</td>
+                  <td><span class="trust {{ u.trust }}">{{ u.trust }}</span></td>
+                  <td>{{ u.created }}</td>
+                  <td>{{ u.role }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    {% endif %}
+  </section>
+  <section>
+    <h2>Most focus time, last {{ days }} days</h2>
+    {% if top.is_empty() %}
+      <p class="empty px">No focus time tracked in the last {{ days }} days.</p>
+    {% else %}
+      <div class="card px">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Person</th>
+              <th>Focus time</th>
+              <th>Agents ran</th>
+              <th>Trust</th>
+              <th>Signals</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in top %}
+              <tr>
+                <td class="muted">{{ loop.index }}</td>
+                <td>
+                  <a href="{{ t.href }}">{{ t.username }}</a>
+                  {%- if let Some(n) = t.name %} <span class="muted">{{ n }}</span>{% endif %}
+                  {%- if !t.public %} <span class="muted small">(private)</span>{% endif %}
+                </td>
+                <td class="num">{{ t.focus }}<span class="minibar"><b style="width:{{ t.pct }}%"></b></span></td>
+                <td class="num">{{ t.agent }}</td>
+                <td><span class="trust {{ t.trust }}">{{ t.trust }}</span></td>
+                <td class="num">{% if t.signals == 0 %}<span class="muted">none</span>{% else %}{{ t.signals }}{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

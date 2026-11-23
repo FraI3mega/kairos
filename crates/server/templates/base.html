@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#3a33a3">
+    <title>{{ base.title }}</title>
+    {% block meta %}{% endblock %}
+    {% if !base.description.is_empty() %}
+      <meta name="description" content="{{ base.description }}">
+      <link rel="canonical" href="{{ base.canonical }}">
+      <meta property="og:site_name" content="Kairos">
+      <meta property="og:type" content="{{ base.og_type }}">
+      <meta property="og:title" content="{{ base.title }}">
+      <meta property="og:description" content="{{ base.description }}">
+      <meta property="og:url" content="{{ base.canonical }}">
+      <meta property="og:image" content="{{ base.public_url }}/og.png">
+      <meta name="twitter:card" content="summary_large_image">
+    {% endif %}
+    <link rel="stylesheet" href="{{ base.fonts_css }}">
+    <link rel="stylesheet" href="{{ base.kairos_css }}">
+    <link rel="icon" href="/favicon.svg">
+  </head>
+  <body>
+    {% include "banner.html" %}
+    <header class="top">
+      <div class="wrap">
+        <nav class="nav" aria-label="Main">
+          <a class="brand" href="/"><svg viewBox="0 0 9 9" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true">{{ base.mark|safe }}</svg>kairos</a>
+          <div class="links">
+            {% block nav %}
+              {% if let Some(u) = base.user %}
+                <a href="/me">Dashboard</a><a href="/leaderboards">Leaderboards</a>
+                {%- if u.is_public %}<a href="/@{{ u.username }}">Profile</a>{% endif -%}
+                <a href="/settings">Settings</a>
+                {%- if u.is_staff() %}<a href="/review">Review</a>{% endif %}
+                {%- if u.role == "admin" %}<a href="/admin">Admin</a>{% endif %}
+                <form method="post" action="/auth/logout">
+                  <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                  <button class="btn light px">Sign out</button>
+                </form>
+              {% else %}
+                <a href="/leaderboards">Leaderboards</a><a class="btn light px" href="/auth/login">Sign in</a>
+              {% endif %}
+            {% endblock %}
+          </div>
+        </nav>
+        {% block head %}{% endblock %}
+      </div>
+    </header>
+    <canvas class="drip" aria-hidden="true"></canvas>
+    <main class="wrap">
+      {% block body %}{% endblock %}
+    </main>
+    <footer class="wrap foot"><span>Kairos is Greek for the right moment.</span><span>AGPL-3.0 · made for Hack Club</span></footer>
+    <script src="{{ base.drip_js }}" nonce="{{ base.nonce }}"></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

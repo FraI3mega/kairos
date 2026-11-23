@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block nav %}
+  {% if base.user.is_some() %}
+    <a href="/me">Dashboard</a><a href="/leaderboards">Leaderboards</a>
+  {% else %}
+    <a href="/leaderboards">Leaderboards</a><a class="btn light px" href="/">Get Kairos</a>
+  {% endif %}
+{% endblock %}
+
+{% block head %}
+  <div class="head">
+    <div class="who">
+      <svg class="av" viewBox="0 0 5 5" shape-rendering="crispEdges" aria-hidden="true">{{ avatar|safe }}</svg>
+      <div>
+        <h1>{{ name }}</h1>
+        <div class="big">{{ total }}</div>
+        <p class="sub">@{{ username }} · focus time building with AI, all time</p>
+      </div>
+    </div>
+    <ul class="hstats">
+      <li class="px"><span>This week</span><b>{{ week }}</b></li>
+      <li class="px"><span>Streak</span><b>{{ streak }}</b></li>
+      <li class="px"><span>Member since</span><b>{{ since }}</b></li>
+    </ul>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section>
+    <h2>This week</h2>
+    <div class="card px">
+      {% call m::week(bars, false) %}{% endcall %}
+    </div>
+  </section>
+  {% include "summary.html" %}
+{% endblock %}

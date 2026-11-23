@@ -1,0 +1,22 @@
+[package]
+name = "kairos-sim"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "kairos-sim"
+path = "src/main.rs"
+
+[dependencies]
+kairos-core = { path = "../core" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
+chrono-tz = "=0.10.4"
+anyhow = "=1.0.104"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio-postgres = "0.7"
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }

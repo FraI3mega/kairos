@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kairos</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon-32.png" width="24" height="24" alt="">
+    <h1>Kairos</h1>
+  </header>
+  <main aria-live="polite">
+    <p id="state" class="state">Checking</p>
+    <p id="today" class="today" hidden></p>
+    <p id="note" class="note" hidden></p>
+    <button id="grant" type="button" hidden>Allow access to the Kairos app</button>
+    <a id="dashboard" href="https://kairos.obayy.dev/me" target="_blank" rel="noopener noreferrer">Open your dashboard</a>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+kairos.obayy.dev {
+	# Compression would hold back server-sent events on the live dashboard stream.
+	@compress not path /me/live
+	encode @compress zstd gzip
+	header -Server
+	reverse_proxy 127.0.0.1:8790
+}
+
+kairos.dev.obayy.dev {
+	redir https://kairos.obayy.dev{uri} 308
+}

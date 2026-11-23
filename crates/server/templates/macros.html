@@ -1,0 +1,33 @@
+{% macro rows(title, list) %}
+  <div>
+    <h2>{{ title }}</h2>
+    <div class="card px">
+      {% if list.is_empty() %}
+        <p class="muted">Nothing here yet.</p>
+      {% else %}
+        <ul class="rows">
+          {% for r in list %}
+            <li>
+              <span class="n" title="{{ r.label }}">
+                {%- if let Some(c) = r.color %}<i style="--c:{{ c }}"></i>{% endif %}
+                {%- if let Some(h) = r.href %}<a href="{{ h }}">{{ r.label }}</a>{% else %}{{ r.label }}{% endif -%}
+              </span><span class="bar"{% if let Some(c) = r.color %} style="--c:{{ c }}"{% endif %}><b style="width:{{ r.pct }}%"></b></span><span class="t">{{ r.time }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro week(bars, agents) %}
+  <div class="wk" id="wk">
+    {% for b in bars %}
+      <div class="wk-day{% if b.today %} now{% endif %}" title="{{ b.title }}">
+        <span class="cols"><i class="f" style="height:{{ b.focus }}%"></i>
+          {%- if agents %}<i class="a" style="height:{{ b.agent }}%"></i>{% endif -%}
+        </span><span class="l">{{ b.label }}</span>
+      </div>
+    {% endfor %}
+  </div>
+{% endmacro %}

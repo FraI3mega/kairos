@@ -1,0 +1,246 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x86_64 }
+          - { os: windows-latest, target: windows-x86_64 }
+          - { os: macos-latest, target: macos-aarch64 }
+          - { os: macos-15-intel, target: macos-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: test database
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name pg -e POSTGRES_USER=kairos -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=kairos -p 5432:5432 postgres:17-alpine
+          for i in $(seq 60); do docker exec pg pg_isready -q -h 127.0.0.1 -U kairos -d kairos && exit 0; sleep 1; done
+          docker logs pg; exit 1
+      - name: tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            KAIROS_TEST_DATABASE_URL=postgres://kairos:dev@127.0.0.1:5432/kairos cargo test --locked --workspace
+          else
+            cargo test --locked --workspace --exclude kairos-server
+          fi
+      - name: package
+        shell: bash
+        run: |
+          set -eu
+          ext=""
+          if [ "$RUNNER_OS" = Windows ]; then ext=".exe"; fi
+          mkdir -p "dist/${{ matrix.target }}"
+          cp "target/release/kairos$ext" "target/release/kairosd$ext" "dist/${{ matrix.target }}/"
+          version=$("target/release/kairosd$ext" --version | tr -d '\r' | cut -d ' ' -f 2)
+          KAIROS_SIGNING_KEY=$(openssl rand -base64 32)
+          export KAIROS_SIGNING_KEY
+          release="target/release/kairos-release$ext"
+          "$release" sign --dist dist --version "$version"
+          "$release" verify --dist dist --version "$version" --pubkey "$("$release" pubkey)"
+          mkdir -p site/download/latest
+          cp -R dist "site/download/$version"
+          cp dist/manifest.json dist/manifest.json.sig site/download/latest/
+          cat "dist/${{ matrix.target }}/SHA256SUMS"
+      - name: windows install smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $entryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Kairos'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Kairos'
+          function Fail($m) { throw $m }
+          function UserPath { [Environment]::GetEnvironmentVariable('Path', 'User') }
+          function OnUserPath { @((UserPath) -split ';' | Where-Object { $_.TrimEnd('\') -ieq $dir }).Count }
+          $pathBefore = UserPath
+
+          target/release/kairos.exe install --no-login
+          if ($LASTEXITCODE -ne 0) { Fail 'install failed' }
+          if ((OnUserPath) -ne 1) { Fail "the install folder is on the user PATH $(OnUserPath) times: $(UserPath)" }
+          Start-Sleep -Seconds 3
+          $value = (Get-ItemProperty -Path $runKey).Kairos
+          if ($value -ne ('"' + $dir + '\kairosd.exe"')) { Fail "unexpected Run value: $value" }
+          if (-not (Test-Path "$dir\kairos.exe")) { Fail 'kairos.exe was not installed' }
+          if (@(Get-Process kairosd -ErrorAction SilentlyContinue).Count -ne 1) { Fail 'kairosd is not running once' }
+          $entry = Get-ItemProperty -Path $entryKey
+          if ($entry.DisplayName -ne 'Kairos') { Fail "unexpected DisplayName: $($entry.DisplayName)" }
+          if ($entry.Publisher -ne 'Kairos') { Fail "unexpected Publisher: $($entry.Publisher)" }
+          if ($entry.DisplayVersion -notmatch '^\d+\.\d+\.\d+') { Fail "unexpected DisplayVersion: $($entry.DisplayVersion)" }
+          if ($entry.InstallLocation -ne $dir) { Fail "unexpected InstallLocation: $($entry.InstallLocation)" }
+          if ($entry.UninstallString -ne ('"' + $dir + '\kairos.exe" uninstall')) { Fail "unexpected UninstallString: $($entry.UninstallString)" }
+          if ($entry.NoModify -ne 1 -or $entry.NoRepair -ne 1 -or $entry.EstimatedSize -lt 100) { Fail 'unexpected NoModify/NoRepair/EstimatedSize' }
+          & "$dir\kairos.exe" doctor
+          if ($LASTEXITCODE -ne 0) { Fail 'doctor failed' }
+
+          target/release/kairos.exe install --no-login
+          if ($LASTEXITCODE -ne 0) { Fail 'second install failed' }
+          Start-Sleep -Seconds 3
+          if (@(Get-Process kairosd -ErrorAction SilentlyContinue).Count -ne 1) { Fail 'kairosd is not running once after upgrade' }
+          if ((OnUserPath) -ne 1) { Fail "the install folder is on the user PATH $(OnUserPath) times after the second install: $(UserPath)" }
+
+          Start-Process -FilePath "$dir\kairosd.exe"
+          Start-Sleep -Seconds 3
+          if (@(Get-Process kairosd -ErrorAction SilentlyContinue).Count -ne 1) { Fail 'a second kairosd was started' }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Kairos\kairosd.log")) { Fail 'kairosd.log was not written' }
+          Get-Content "$env:LOCALAPPDATA\Kairos\kairosd.log"
+
+          & "$dir\kairos.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { Fail 'uninstall failed' }
+          Start-Sleep -Seconds 5
+          if (Get-ItemProperty -Path $runKey -Name Kairos -ErrorAction SilentlyContinue) { Fail 'Run value is still there' }
+          if (Test-Path $entryKey) { Fail 'Apps & features entry is still there' }
+          if ((OnUserPath) -ne 0) { Fail "the install folder is still on the user PATH: $(UserPath)" }
+          if ("$(UserPath)" -cne "$pathBefore") { Fail "the user PATH changed: was '$pathBefore', now '$(UserPath)'" }
+          if (Get-Process kairosd -ErrorAction SilentlyContinue) { Fail 'kairosd is still running' }
+          if (Test-Path "$dir\kairosd.exe") { Fail 'kairosd.exe is still installed' }
+          if (Test-Path "$dir\kairos.exe") { Fail 'kairos.exe is still installed' }
+          Start-Sleep -Seconds 12
+          if (Test-Path $dir) { Fail 'install folder was not cleaned up' }
+      - name: windows update roll back test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Kairos'
+          $data = Join-Path $env:LOCALAPPDATA 'Kairos'
+          $built = Join-Path (Get-Location) 'target\release'
+          function Fail($m) { throw $m }
+          function Hash($p) { try { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash } catch { '' } }
+          function Daemons { @(Get-Process kairosd -ErrorAction SilentlyContinue).Count }
+          function Skipped { if (Test-Path "$data\update-skip") { (Get-Content "$data\update-skip" -Raw).Trim() } else { '' } }
+          # The state an update leaves: the built pair set aside as the version before, and a pair with extra bytes
+          # at the end (so the two can be told apart) installed in its place.
+          function StageUpdate($starts) {
+            Get-Process kairosd, kairosd.old -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 3
+            Remove-Item "$dir\kairos*.old*" -Force -ErrorAction SilentlyContinue
+            Remove-Item "$data\update-skip" -Force -ErrorAction SilentlyContinue
+            foreach ($n in 'kairos', 'kairosd') {
+              Copy-Item "$built\$n.exe" "$dir\$n.old.exe" -Force
+              Copy-Item "$built\$n.exe" "$dir\$n.exe" -Force
+              [IO.File]::AppendAllText("$dir\$n.exe", 'updated')
+            }
+            $trial = '{"version":"' + $version + '","starts":' + $starts + ',"backups":[["kairos.exe","kairos.old.exe"],["kairosd.exe","kairosd.old.exe"]]}'
+            [IO.File]::WriteAllText("$dir\kairos.old-trial.json", $trial)
+          }
+
+          & "$built\kairos.exe" install --no-login
+          if ($LASTEXITCODE -ne 0) { Fail 'install failed' }
+          $version = ((& "$built\kairosd.exe" --version | Out-String).Trim() -split ' ')[1]
+          if ($version -notmatch '^\d+\.\d+\.\d+') { Fail "unexpected version: $version" }
+          $before = Hash "$built\kairosd.exe"
+
+          StageUpdate 3
+          Start-Process -FilePath "$dir\kairosd.exe"
+          Start-Sleep -Seconds 12
+          if ((Hash "$dir\kairosd.exe") -ne $before) { Fail 'a kairosd that kept starting without staying up was not replaced by the one before it' }
+          if ((Hash "$dir\kairos.exe") -ne (Hash "$built\kairos.exe")) { Fail 'kairos.exe was not put back' }
+          if (Test-Path "$dir\kairos.old-trial.json") { Fail 'the update is still on trial after the roll back' }
+          if ((Skipped) -ne $version) { Fail "the version that did not stay up is not skipped: '$(Skipped)'" }
+          if ((Daemons) -ne 1) { Fail "kairosd runs $(Daemons) times after the roll back" }
+
+          StageUpdate 1
+          Start-Process -FilePath "$dir\kairosd.old.exe" -ArgumentList '--watch-update'
+          $until = (Get-Date).AddSeconds(120)
+          while ((Get-Date) -lt $until -and (Hash "$dir\kairosd.exe") -ne $before) { Start-Sleep -Seconds 5 }
+          if ((Hash "$dir\kairosd.exe") -ne $before) { Fail 'the kairosd before the update was not put back after the updated one died' }
+          Start-Sleep -Seconds 8
+          if ((Skipped) -ne $version) { Fail "the version that died is not skipped: '$(Skipped)'" }
+          if ((Daemons) -ne 1) { Fail "kairosd runs $(Daemons) times after the watcher put it back" }
+
+          StageUpdate 1
+          $updated = Hash "$dir\kairosd.exe"
+          Start-Process -FilePath "$dir\kairosd.old.exe" -ArgumentList '--watch-update'
+          Start-Process -FilePath "$dir\kairosd.exe"
+          Start-Sleep -Seconds 110
+          if (Get-Process kairosd.old -ErrorAction SilentlyContinue) { Fail 'the watcher is still running' }
+          if ((Hash "$dir\kairosd.exe") -ne $updated) { Fail 'a kairosd that stayed up was replaced' }
+          if ((Skipped) -ne '') { Fail 'a version that stayed up is skipped' }
+          if ((Daemons) -ne 1) { Fail "kairosd runs $(Daemons) times after an update that stayed up" }
+          Get-Content "$data\kairosd.log" -Tail 40
+
+          & "$dir\kairos.exe" uninstall
+          if ($LASTEXITCODE -ne 0) { Fail 'uninstall failed' }
+          Start-Sleep -Seconds 12
+          if (Get-Process kairosd -ErrorAction SilentlyContinue) { Fail 'kairosd is still running' }
+          if (Test-Path $dir) { Fail 'install folder was not cleaned up' }
+      - name: windows install.ps1 test
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Kairos'
+          $web = Start-Process -FilePath python -ArgumentList '-m', 'http.server', '8099', '--bind', '127.0.0.1', '--directory', 'site' -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          $env:KAIROS_SERVER = 'http://127.0.0.1:8099'
+          try {
+            Get-Content packaging/install.ps1 -Raw | Invoke-Expression
+          } finally {
+            Stop-Process -Id $web.Id -Force
+          }
+          Start-Sleep -Seconds 3
+          if (-not (Test-Path "$dir\kairosd.exe")) { throw 'install.ps1 did not install kairosd.exe' }
+          if (-not (Get-Process kairosd -ErrorAction SilentlyContinue)) { throw 'kairosd is not running' }
+          if (-not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Kairos')) { throw 'no Apps & features entry' }
+          if (($env:Path -split ';').TrimEnd('\') -notcontains $dir) { throw 'install.ps1 did not put the install folder on this session PATH' }
+          & "$dir\kairos.exe" uninstall
+          Start-Sleep -Seconds 5
+          if (Get-Process kairosd -ErrorAction SilentlyContinue) { throw 'kairosd is still running' }
+      - name: install.sh test
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          python3 -m http.server 8099 --bind 127.0.0.1 --directory site >/dev/null 2>&1 &
+          trap "kill $!" EXIT
+          sleep 2
+          if [ "$RUNNER_OS" = macOS ]; then
+            bin="$HOME/Library/Application Support/Kairos/bin"
+          else
+            bin="$HOME/.local/bin"
+          fi
+          export KAIROS_SERVER=http://127.0.0.1:8099
+          sh packaging/install.sh --no-login
+          test -x "$bin/kairos"
+          test -x "$bin/kairosd"
+          grep -qs '# kairos' "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"
+          "$bin/kairos" status
+          "$bin/kairos" doctor
+          # Runner images can set XDG_CONFIG_HOME to the real home, and Kairos follows it.
+          config="${XDG_CONFIG_HOME:-$HOME/.config}"
+          if [ "$RUNNER_OS" = Linux ]; then
+            unit="$config/systemd/user/kairosd.service"
+            desktop="$config/autostart/kairos.desktop"
+            if [ -e "$unit" ] && [ -e "$desktop" ]; then echo "both autostarts are registered"; exit 1; fi
+            [ -e "$unit" ] || [ -e "$desktop" ]
+          else
+            test -f "$HOME/Library/LaunchAgents/dev.obayy.kairos.plist"
+          fi
+          "$bin/kairos" uninstall
+          test ! -e "$bin/kairosd"
+          test ! -e "$bin/kairos"
+          ! grep -qs '# kairos' "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"
+          test ! -e "$config/autostart/kairos.desktop"
+          test ! -e "$config/systemd/user/kairosd.service"
+          test ! -e "$HOME/Library/LaunchAgents/dev.obayy.kairos.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kairos-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+          if-no-files-found: error

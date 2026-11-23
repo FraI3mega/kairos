@@ -1,0 +1,175 @@
+name: windows-check
+on:
+  workflow_dispatch:
+  # Dispatch only finds workflows on main; before that, pushing to a windows-check/* branch runs it.
+  push:
+    branches: ['windows-check/**']
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: runner
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          "$($os.Caption) $($os.Version), session $((Get-Process -Id $PID).SessionId)"
+          git --version
+      - name: build
+        timeout-minutes: 12
+        run: |
+          cargo test -p kairos-core -p kairos-agent -p kairos-cli --locked --no-run
+          cargo build -p kairos-agent -p kairos-cli --locked
+      - name: unit tests
+        timeout-minutes: 4
+        run: cargo test -p kairos-core -p kairos-agent -p kairos-cli --locked --no-fail-fast
+      # Same packages as the build, so cargo reuses it.
+      - name: backends against real apps, default terminal
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        run: cargo test -p kairos-core -p kairos-agent -p kairos-cli --locked -- --ignored --nocapture --test-threads=1
+      - name: kairosd records focus, presence and commits
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $bin = Join-Path $PWD 'target\debug'
+          $data = Join-Path $env:RUNNER_TEMP 'kairos'
+          $env:KAIROS_DIR = $data
+          $id = 'kairos-e2e-proj'
+          $repo = Join-Path $env:RUNNER_TEMP "e2e\$id"
+          New-Item -ItemType Directory -Force -Path $repo | Out-Null
+
+          function Read-Events {
+            foreach ($line in (Get-Content -Path "$data\events-*.jsonl" -ErrorAction SilentlyContinue)) {
+              try { $line | ConvertFrom-Json } catch { }
+            }
+          }
+          function Wait-Kairos([string]$what, [scriptblock]$match, [int]$secs) {
+            $deadline = (Get-Date).AddSeconds($secs)
+            while ((Get-Date) -lt $deadline) {
+              $hit = @(Read-Events | Where-Object $match)
+              if ($hit.Count -gt 0) {
+                Write-Host "kairosd wrote $what"
+                return $hit[0]
+              }
+              Start-Sleep -Milliseconds 500
+            }
+            throw "kairosd wrote no $what within $secs s"
+          }
+          # Select-String fails the step on a missing file even with -ErrorAction SilentlyContinue.
+          function Test-Mentions([string]$path, [string]$text) {
+            try { [IO.File]::ReadAllText($path).Contains($text) } catch { $false }
+          }
+
+          # Commit messages carry "secret" so the logs can be searched for them. File names are
+          # recorded, so they do not.
+          git -C $repo init -q -b main
+          git -C $repo config user.email e2e@example.com
+          git -C $repo config user.name e2e
+          git -C $repo config commit.gpgsign false
+          git -C $repo config core.autocrlf false
+          [IO.File]::WriteAllText("$repo\notes.txt", "one`ntwo`nthree`n")
+          git -C $repo add -A
+          git -C $repo commit -q -m 'secret message one'
+
+          $daemon = Start-Process -FilePath "$bin\kairosd.exe" -PassThru
+          $notepad = $null
+          $console = $null
+          try {
+            Start-Sleep -Seconds 3
+            $notepad = Start-Process -FilePath notepad.exe -WorkingDirectory $env:RUNNER_TEMP -PassThru
+            Start-Sleep -Seconds 3
+            $console = Start-Process -FilePath cmd.exe -ArgumentList '/d', '/k' -WorkingDirectory $repo -PassThru
+            Wait-Kairos 'a terminal focus in the project' { $_.kind -eq 'focus' -and $_.class -eq 'terminal' -and $_.project -eq $id } 20 | Out-Null
+            $deadline = (Get-Date).AddSeconds(15)
+            while (-not (Test-Mentions "$data\git-state.json" $id)) {
+              if ((Get-Date) -gt $deadline) { throw 'the git watcher never registered the project' }
+              Start-Sleep -Milliseconds 500
+            }
+            Write-Host 'the git watcher follows the project'
+
+            [IO.File]::WriteAllText("$repo\notes.txt", "one`n2`nthree`nfour`n")
+            [IO.File]::WriteAllText("$repo\plan.txt", "a`nb`n")
+            git -C $repo add -A
+            git -C $repo commit -q -m 'secret message two'
+            $sha = (git -C $repo rev-parse HEAD).Trim()
+            $commit = Wait-Kairos 'a commit' { $_.kind -eq 'commit' } 20
+            if ($commit.sha -ne $sha -or $commit.project -ne $id) { throw "commit $($commit.sha) in $($commit.project), expected $sha in $id" }
+            if ($commit.files -ne 2 -or $commit.added -ne 4 -or $commit.removed -ne 1) {
+              throw "commit counts $($commit.files)/$($commit.added)/$($commit.removed), expected 2/4/1"
+            }
+            $listed = @($commit.changes | ForEach-Object { "$($_.path):$($_.added):$($_.removed)" }) -join ','
+            if ($listed -ne 'notes.txt:2:1,plan.txt:2:0') { throw "commit changes were '$listed', expected 'notes.txt:2:1,plan.txt:2:0'" }
+            $saves = Wait-Kairos 'file saves' { $_.kind -eq 'file_save' -and $_.project -eq $id } 15
+            Write-Host "file_save count $($saves.count)"
+
+            $status = & "$bin\kairos.exe" status | Out-String
+            Write-Host $status
+            if ($status -notmatch 'kairosd\s+running' -or $status -notmatch 'watching focus GetForegroundWindow, presence GetLastInputInfo') {
+              throw 'kairos status did not get the daemon status over the local API'
+            }
+
+            # Someone at the keyboard (F15, bound to nothing, every 15 s) ends the idle stretch, and a
+            # present tick follows a minute later. One press alone would go idle as that tick is due.
+            Add-Type -Namespace Kairos -Name Input -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);'
+            $deadline = (Get-Date).AddSeconds(90)
+            while (-not @(Read-Events | Where-Object { $_.kind -eq 'present' })) {
+              if ((Get-Date) -gt $deadline) { throw 'kairosd wrote no present tick within 90 s of input' }
+              [Kairos.Input]::keybd_event(0x7E, 0, 0, [UIntPtr]::Zero)
+              [Kairos.Input]::keybd_event(0x7E, 0, 2, [UIntPtr]::Zero)
+              Start-Sleep -Seconds 15
+            }
+            Write-Host 'kairosd wrote a present tick'
+
+            & "$bin\kairos.exe" pause 30m
+            & "$bin\kairos.exe" resume
+            Wait-Kairos 'a resume' { $_.kind -eq 'resume' } 10 | Out-Null
+
+            $p = Get-Process -Id $daemon.Id
+            'kairosd (debug build): {0:N1} MB working set, {1:N1} MB peak, {2:N1} MB private' -f ($p.WorkingSet64 / 1MB), ($p.PeakWorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB)
+          } finally {
+            Stop-Process -Id $daemon.Id -ErrorAction SilentlyContinue
+            foreach ($p in @($console, $notepad)) { if ($p) { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue } }
+            Start-Sleep -Seconds 1
+            Write-Host '--- events'
+            Get-Content -Path "$data\events-*.jsonl" -ErrorAction SilentlyContinue
+            Write-Host '--- kairosd.log'
+            Get-Content -Path "$data\kairosd.log" -ErrorAction SilentlyContinue
+          }
+
+          $events = @(Read-Events)
+          $backends = $events | Where-Object { $_.kind -eq 'backends' } | Select-Object -Last 1
+          if ($backends.focus -ne 'GetForegroundWindow' -or $backends.idle -ne 'GetLastInputInfo') {
+            throw "backends were focus=$($backends.focus) idle=$($backends.idle)"
+          }
+          $kinds = @($events | ForEach-Object { $_.kind })
+          $idle = [array]::IndexOf($kinds, 'idle')
+          if ($idle -lt 0 -or $idle -gt [array]::IndexOf($kinds, 'present')) { throw 'no idle event before the present tick' }
+          $leaks = @(Get-ChildItem -LiteralPath $data -File -Recurse | Where-Object { [IO.File]::ReadAllText($_.FullName).Contains('secret') })
+          if ($leaks) { throw "a commit message reached $($leaks.Name -join ', ')" }
+          if (Test-Mentions "$data\kairosd.log" 'running without a tray') { throw 'the tray did not start' }
+      # Last, since it changes the runner's default terminal for the rest of the job.
+      - name: backends against real apps, classic console host
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          # Delegating to the inbox conhost turns off the handoff of new consoles to Windows Terminal.
+          $key = 'HKCU:\Console\%%Startup'
+          $conhost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key | Out-Null }
+          Set-ItemProperty -LiteralPath $key -Name DelegationConsole -Value $conhost
+          Set-ItemProperty -LiteralPath $key -Name DelegationTerminal -Value $conhost
+          cargo test -p kairos-core -p kairos-agent -p kairos-cli --locked -- --ignored --nocapture --test-threads=1

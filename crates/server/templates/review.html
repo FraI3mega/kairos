@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% macro strip(d) %}
+  <span class="dl">{{ d.label }}</span><span class="strip">
+    {%- for s in d.outside %}<i class="o" title="{{ s.title }}" style="left:{{ s.left }}%;width:{{ s.width }}%"></i>{% endfor %}
+    {%- for s in d.muted %}<i class="m" title="{{ s.title }}" style="left:{{ s.left }}%;width:{{ s.width }}%"></i>{% endfor %}
+    {%- for s in d.focus -%}
+      <i class="f" title="{{ s.title }}" style="left:{{ s.left }}%;width:{{ s.width }}%;background:{{ s.color }}"></i>
+    {%- endfor %}
+    {%- for s in d.agent_muted %}<i class="am" title="{{ s.title }}" style="left:{{ s.left }}%;width:{{ s.width }}%"></i>{% endfor %}
+    {%- for s in d.agent %}<i class="a" title="{{ s.title }}" style="left:{{ s.left }}%;width:{{ s.width }}%"></i>{% endfor %}
+    {%- for t in d.ticks %}<b class="k" title="{{ t.title }}" style="left:{{ t.left }}%"></b>{% endfor -%}
+  </span><span class="dt">{{ d.total }}</span>
+{% endmacro %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <p class="crumb"><a href="/review">Review</a> / @{{ username }}</p>
+      <h1>{{ name }}</h1>
+      <p class="sub">
+        @{{ username }} · {{ role }} · <span class="trust {{ trust }}">{{ trust }}</span> · joined {{ created }} · {{ timezone }}
+        {%- if let Some(sl) = slack_id %} · Slack {{ sl }}{% endif %}
+        {%- if !public %} · private profile{% endif %}
+      </p>
+      <div class="big">{{ official }}</div>
+      <p class="sub">Focus time, {{ range }}{% if filtered %} · {{ projects_value }}{% endif %}</p>
+    </div>
+    <ul class="hstats">
+      <li class="px"><span>Agents ran</span><b>{{ agent }}</b></li>
+      <li class="px"><span>Input seen</span><b>{{ input }}</b></li>
+      <li class="px"><span>Editor time</span><b>{% if let Some((t, _)) = heartbeats %}{{ t }}{% else %}none{% endif %}</b></li>
+    </ul>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section id="filter">
+    <form class="card px form filter" method="get" action="/review/@{{ username }}"><label>From<input type="date" name="from" value="{{ from }}" required></label><label>To<input type="date" name="to" value="{{ to }}" required></label><label>Projects<input type="text" name="projects" value="{{ projects_value }}" list="known" placeholder="All projects" autocomplete="off"></label><button class="btn px">Show</button></form>
+    <datalist id="known">
+      {% for k in known_projects %}
+        <option value="{{ k }}">
+      {% endfor %}
+    </datalist>
+    <p class="muted small">
+      Days run midnight to midnight in {{ timezone }}. Separate projects with commas, the way a program sends <code>filter_by_project</code>. A program's own <code>start_date</code> and <code>end_date</code> work here too.
+      {%- if program %} This window came from them, read the way the read API reads them.{% endif %}
+      {%- if cut %} Windows stop at {{ max_days }} days, so this shows the latest {{ max_days }}.{% endif %}
+    </p>
+    <div class="card px official">
+      <p>A program asking for this window gets <b>{{ official_secs }} second{% if official_secs != 1 %}s{% endif %}</b> of focus time ({{ official }}) from:</p>
+      <div class="cmd"><code>{{ api_path }}</code><button type="button" class="copy" hidden>Copy</button></div>
+      <p class="muted small">
+        {% if filtered %}
+          Another {{ not_counted }} was credited to other projects or to no project.
+        {%- else %}
+          Another {{ not_counted }} was credited with no project, which doesn't count.
+        {%- endif %} Input seen is every minute with keyboard or mouse input on any device.
+        {%- if let Some((t, n)) = heartbeats %} Editor plugins sent {{ n }} heartbeat{% if *n != 1 %}s{% endif %}, {{ t }} counted the Hackatime way.{% endif %}
+      </p>
+    </div>
+  </section>
+  <section id="signals">
+    <h2>Signals</h2>
+    <p class="muted">Patterns worth a closer look in this window, across all projects. They're context for a reviewer and never change credit or trust on their own.</p>
+    {% if signals.is_empty() %}
+      <p class="empty px">Nothing stands out in this window.</p>
+    {% else %}
+      <ul class="sigs">
+        {% for s in signals %}
+          <li class="px {{ s.level.as_str() }}" id="sig-{{ s.id }}">
+            <h3>{{ s.title }}<span class="lvl">{{ s.level.as_str() }}</span></h3>
+            <p>{{ s.explanation }}</p>
+            <ul>
+              {% for e in s.evidence %}
+                <li>{% if let Some(day) = e.day %}<a href="#d-{{ day }}">{{ day.format("%a %b %-d") }}</a> · {% endif %}{{ e.text }}</li>
+              {% endfor %}
+              {% if s.more > 0 %}
+                <li class="muted">and {{ s.more }} more</li>
+              {% endif %}
+            </ul>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+  <section class="grid2">
+    {% call m::rows("Projects", by_project) %}{% endcall %}
+    {% call m::rows("Kind of work", by_class) %}{% endcall %}
+  </section>
+  <section id="days">
+    <h2>Day by day</h2>
+    <p class="muted">One row per day in {{ timezone }}, newest first. Hover for details, or open a day to see every credited span behind it.</p>
+    <div class="card px tl">
+      <div class="row ax" aria-hidden="true"><span></span><span class="hours"><i style="left:0%">00</i><i style="left:25%">06</i><i style="left:50%">12</i><i style="left:75%">18</i><i style="left:100%">24</i></span><span></span></div>
+      {% for d in days %}
+        {% if d.rows.is_empty() && d.agents.is_empty() %}
+          <div class="row day" id="{{ d.id }}">{% call strip(d) %}{% endcall %}</div>
+        {% else %}
+          <details id="{{ d.id }}">
+            <summary class="row">{% call strip(d) %}{% endcall %}</summary>
+            <div class="spans">
+              {% if !d.rows.is_empty() %}
+                <table class="table small">
+                  <thead>
+                    <tr>
+                      <th>Start</th>
+                      <th>End</th>
+                      <th>Length</th>
+                      <th>Kind of work</th>
+                      <th>Project</th>
+                      <th>Rule</th>
+                      <th>Device</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in d.rows %}
+                      <tr{% if !r.counted %} class="off"{% endif %}>
+                        <td>{{ r.start }}</td>
+                        <td>{{ r.end }}</td>
+                        <td>{{ r.length }}</td>
+                        <td><i class="sw" style="--c:{{ r.color }}"></i>{{ r.class }}</td>
+                        <td>{{ r.project }}{% if !r.counted %} (not counted){% endif %}</td>
+                        <td><code>{{ r.rule }}</code></td>
+                        <td>{{ r.device }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% if d.more > 0 %}
+                  <p class="muted small">{{ d.more }} more {% if d.more == 1 %}span on this day isn't{% else %}spans on this day aren't{% endif %} listed.</p>
+                {% endif %}
+              {% endif %}
+              {% if !d.agents.is_empty() %}
+                <h3>Agents ran</h3>
+                <table class="table small">
+                  <thead>
+                    <tr>
+                      <th>Start</th>
+                      <th>End</th>
+                      <th>Length</th>
+                      <th>Project</th>
+                      <th>Device</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for a in d.agents %}
+                      <tr>
+                        <td>{{ a.start }}</td>
+                        <td>{{ a.end }}</td>
+                        <td>{{ a.length }}</td>
+                        <td>{{ a.project }}</td>
+                        <td>{{ a.device }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              {% endif %}
+            </div>
+          </details>
+        {% endif %}
+      {% endfor %}
+      <p class="legend"><span><i class="lf"></i>Focus time, by kind of work</span><span><i class="lm"></i>Credited, not counted here</span><span><i class="la"></i>Agents ran</span><span><i class="lk"></i>Commit</span><span><i class="lo"></i>Outside the window</span></p>
+    </div>
+  </section>
+  <section id="commits">
+    <h2>Commits</h2>
+    <div class="cards tight four">
+      <div class="stat px">
+        <span>Commits</span><b>{{ commit_count }}</b>
+        <p>In this window{% if filtered %} and these projects{% endif %}.</p>
+      </div>
+      <div class="stat px">
+        <span>Changed lines</span><b>{{ commit_lines }}</b>
+        <p>Lines added plus lines removed.</p>
+      </div>
+      <div class="stat px">
+        <span>Per focus hour</span>
+        {%- if let Some((c, l)) = per_hour -%}
+          <b>{{ c }}</b>
+          <p>commits, and {{ l }} changed lines.</p>
+        {% else -%}
+          <b>none</b>
+          <p>No focus time to compare with.</p>
+        {% endif %}
+      </div>
+      <div class="stat px">
+        <span>From agent edits</span>
+        {%- if let Some((pct, of)) = agent_share -%}
+          <b>{{ pct }}</b>
+          <p>{{ of }}</p>
+        {% else -%}
+          <b>none</b>
+          <p>No commits from their devices with a file list yet.</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if commits.is_empty() %}
+      <p class="empty px">No commits in this window.</p>
+    {% else %}
+      <p class="muted small"><a href="/review/@{{ username }}/github?{{ back }}">Check these commits on GitHub</a></p>
+      <ul class="commits card px">
+        {% for c in commits %}
+          <li>
+            {% if let Some(u) = c.url %}
+              <a href="{{ u }}" rel="noopener noreferrer nofollow"><code>{{ c.short }}</code></a>
+            {%- else %}
+              <code>{{ c.short }}</code>
+            {%- endif -%}
+            <span class="when">{{ c.when }} · {{ c.project }}
+              {%- if let Some(v) = c.via %} <span class="tag">{{ v }}</span>{% endif %}
+              {%- if let Some(g) = c.git_date %} <span class="tag">git date {{ g }}</span>{% endif %}
+              {%- if let Some(m) = c.made_by %} <span class="tag made">made by {{ m }}</span>{% endif -%}
+            </span><span class="diff">{{ c.files }} {% if c.files == 1 %}file{% else %}files{% endif %} <b class="add">+{{ c.added }}</b> <b class="del">-{{ c.removed }}</b>
+              {%- if let Some((aa, ar, tools)) = c.agent -%}
+                <span class="ag">agent edits +{{ aa }} -{{ ar }}{% if !tools.is_empty() %}, {{ tools }}{% endif %}</span>
+              {%- endif -%}
+            </span>
+            {% if !c.changes.is_empty() %}
+              <details class="files">
+                <summary>Changed files</summary>
+                <ul>
+                  {% for f in c.changes %}
+                    <li>
+                      <span class="path">{{ f.path }}</span><span class="diff">
+                        {%- if let Some((aa, ar)) = f.agent %}<span class="ag">agent +{{ aa }} -{{ ar }}</span> {% endif -%}
+                        <b class="add">+{{ f.added }}</b> <b class="del">-{{ f.removed }}</b></span>
+                    </li>
+                  {% endfor %}
+                </ul>
+                {% if c.more_files > 0 %}
+                  <p class="muted small">{{ c.more_files }} more {% if c.more_files == 1 %}file{% else %}files{% endif %}</p>
+                {% endif %}
+              </details>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if commits_more > 0 %}
+        <p class="muted small">{{ commits_more }} older {% if commits_more == 1 %}commit in this window isn't{% else %}commits in this window aren't{% endif %} listed.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+  <section id="devices">
+    <h2>Devices</h2>
+    {% if devices.is_empty() %}
+      <p class="empty px">No devices yet.</p>
+    {% else %}
+      <ul class="devices wide">
+        {% for d in devices %}
+          <li class="px{% if d.revoked.is_some() %} gone{% endif %}">
+            <div class="dev-top"><b>{{ d.name }}</b><span class="seen">{% if let Some(r) = d.revoked %}Disconnected {{ r }}{% else %}Seen {{ d.seen }}{% endif %}</span></div>
+            <span>{{ d.os }} · {% if let Some(v) = d.version %}v{{ v }}{% else %}version unknown{% endif %} · {{ d.events }} event{% if d.events != 1 %}s{% endif %}</span><span>Focus {% if d.focus_blind -%}
+                <span class="flag" title="Can't see which window has focus">{{ d.focus }}</span>
+              {%- else -%}
+                {{ d.focus }}
+              {%- endif %} · idle {% if d.idle_blind -%}
+                <span class="flag" title="Can't see keyboard or mouse input">{{ d.idle }}</span>
+              {%- else -%}
+                {{ d.idle }}
+              {%- endif -%}
+            </span><span class="mono">{% if d.events > 0 %}{{ d.first }} to {{ d.last }}{% else %}No events yet{% endif %}</span>
+          </li>
+        {% endfor %}
+      </ul>
+      <p class="muted small">Times in {{ timezone }}. Marked backends can't see focus or input on that device.</p>
+    {% endif %}
+  </section>
+  <section id="trust">
+    <h2>Trust</h2>
+    <div class="card px">
+      <p>Currently <span class="trust {{ trust }}">{{ trust }}</span></p>
+      {% if let Some(l) = trust_locked %}
+        <p class="muted">{{ l }}</p>
+      {% else %}
+        <form class="form split" method="post" action="/review/@{{ username }}/trust">
+          <input type="hidden" name="csrf" value="{{ base.csrf }}">
+          <input type="hidden" name="back" value="{{ back }}">
+          <label>New level<select name="trust">{% for t in trust_options %}<option>{{ t }}</option>{% endfor %}</select></label><label>Reason<input type="text" name="reason" required maxlength="{{ reason_max }}" placeholder="What you checked and what you found" autocomplete="off"></label><button class="btn px">Set trust</button>
+        </form>
+      {% endif %}
+      {% if trust_history.is_empty() %}
+        <p class="muted small">No trust changes yet.</p>
+      {% else %}
+        <ul class="notes">
+          {% for h in trust_history %}
+            <li>
+              <span class="by">{{ h.actor }} · {{ h.at }} UTC</span>
+              <p><b>{{ h.from }} to {{ h.to }}</b> · {{ h.reason }}</p>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+  <section id="notes">
+    <h2>Notes</h2>
+    <div class="card px">
+      <form class="form" method="post" action="/review/@{{ username }}/notes">
+        <input type="hidden" name="csrf" value="{{ base.csrf }}">
+        <input type="hidden" name="back" value="{{ back }}">
+        <label>Add a note<textarea name="body" required maxlength="{{ note_max }}" rows="4" placeholder="What you looked at and what's next"></textarea></label><button class="btn px">Add note</button>
+      </form>
+      <p class="muted small">Only reviewers and admins see notes. Notes can't be edited or deleted.</p>
+      {% if !notes.is_empty() %}
+        <ul class="notes">
+          {% for n in notes %}
+            <li>
+              <span class="by">{{ n.author }} · {{ n.at }} UTC</span>
+              <p>{{ n.body }}</p>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ base.dash_js }}" nonce="{{ base.nonce }}"></script>
+{% endblock %}

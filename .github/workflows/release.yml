@@ -1,0 +1,214 @@
+name: release
+# The release-dry-run branch, or a manual run with dry_run, signs with a throwaway key and publishes nothing.
+on:
+  push:
+    tags: ['v*']
+    branches: [release-dry-run]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Sign with a throwaway key and publish nothing
+        type: boolean
+        default: true
+      macos:
+        description: Also build the macOS targets
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      dry: ${{ steps.v.outputs.dry }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        shell: bash
+        env:
+          REAL: ${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) }}
+        run: |
+          set -eu
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kairos-agent") | .version')
+          for p in kairos-cli kairos-core kairos-release; do
+            v=$(cargo metadata --no-deps --format-version 1 | jq -r --arg p "$p" '.packages[] | select(.name == $p) | .version')
+            [ "$v" = "$version" ] || { echo "$p is $v but kairos-agent is $version"; exit 1; }
+          done
+          if [ "$REAL" = true ]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME does not match the workspace version $version"; exit 1; }
+            echo dry=false >> "$GITHUB_OUTPUT"
+          else
+            echo dry=true >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild@0.24.1
+      - name: build static musl binaries
+        shell: bash
+        run: |
+          set -eu
+          for pair in x86_64:linux-x86_64 aarch64:linux-aarch64; do
+            triple="${pair%%:*}-unknown-linux-musl"
+            target="${pair#*:}"
+            cargo zigbuild --release --locked --target "$triple" -p kairos-cli -p kairos-agent
+            mkdir -p "dist/$target"
+            cp "target/$triple/release/kairos" "target/$triple/release/kairosd" "dist/$target/"
+            file "dist/$target/kairosd" | tee /dev/stderr | grep -Eq 'statically linked|static-pie linked'
+          done
+          test "$(dist/linux-x86_64/kairosd --version)" = "kairosd ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: dist
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        shell: bash
+        run: |
+          set -eu
+          cargo build --release --locked --target x86_64-pc-windows-msvc -p kairos-cli -p kairos-agent
+          mkdir -p dist/windows-x86_64
+          cp target/x86_64-pc-windows-msvc/release/kairos.exe target/x86_64-pc-windows-msvc/release/kairosd.exe dist/windows-x86_64/
+          test "$(dist/windows-x86_64/kairosd.exe --version | tr -d '\r')" = "kairosd ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: dist
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.macos)
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        shell: bash
+        run: |
+          set -eu
+          for pair in aarch64:macos-aarch64 x86_64:macos-x86_64; do
+            triple="${pair%%:*}-apple-darwin"
+            target="${pair#*:}"
+            cargo build --release --locked --target "$triple" -p kairos-cli -p kairos-agent
+            mkdir -p "dist/$target"
+            cp "target/$triple/release/kairos" "target/$triple/release/kairosd" "dist/$target/"
+            otool -l "dist/$target/kairosd" | grep -A4 LC_BUILD_VERSION | grep -q 'minos 12.0'
+          done
+          test "$(dist/macos-aarch64/kairosd --version)" = "kairosd ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: dist
+          if-no-files-found: error
+
+  publish:
+    needs: [version, linux, windows, macos]
+    if: >-
+      always() && needs.linux.result == 'success' && needs.windows.result == 'success' &&
+      (needs.macos.result == 'success' || (needs.macos.result == 'skipped' && needs.version.outputs.dry == 'true'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DRY: ${{ needs.version.outputs.dry }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: build kairos-release
+        run: cargo build --release --locked -p kairos-release
+      - name: sign with the release key
+        if: needs.version.outputs.dry == 'false'
+        env:
+          KAIROS_SIGNING_KEY: ${{ secrets.KAIROS_SIGNING_KEY }}
+        run: |
+          set -eu
+          chmod +x dist/*/kairos dist/*/kairosd
+          test "$(ls dist | wc -l)" = 5
+          target/release/kairos-release sign --dist dist --version "$VERSION"
+          target/release/kairos-release verify --dist dist --version "$VERSION"
+      - name: sign with a throwaway key (dry run)
+        if: needs.version.outputs.dry == 'true'
+        run: |
+          set -eu
+          chmod +x dist/*/kairos dist/*/kairosd
+          KAIROS_SIGNING_KEY=$(openssl rand -base64 32)
+          export KAIROS_SIGNING_KEY
+          target/release/kairos-release sign --dist dist --version "$VERSION"
+          target/release/kairos-release verify --dist dist --version "$VERSION" --pubkey "$(target/release/kairos-release pubkey)"
+      - name: install.sh against the signed tree
+        run: |
+          set -eu
+          mkdir -p site/download/latest
+          cp -R dist "site/download/$VERSION"
+          cp dist/manifest.json dist/manifest.json.sig site/download/latest/
+          python3 -m http.server 8099 --bind 127.0.0.1 --directory site >/dev/null 2>&1 &
+          trap "kill $!" EXIT
+          sleep 2
+          export HOME="$RUNNER_TEMP/home" KAIROS_SERVER=http://127.0.0.1:8099
+          mkdir -p "$HOME"
+          sh packaging/install.sh --no-login
+          "$HOME/.local/bin/kairos" --version
+          "$HOME/.local/bin/kairos" doctor
+          "$HOME/.local/bin/kairos" uninstall
+          test ! -e "$HOME/.local/bin/kairosd"
+      - name: package
+        run: |
+          set -eu
+          tar -czf "kairos-dist-$VERSION.tar.gz" -C dist .
+          tar -tvzf "kairos-dist-$VERSION.tar.gz"
+          sha256sum "kairos-dist-$VERSION.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kairos-dist-${{ needs.version.outputs.version }}
+          path: kairos-dist-${{ needs.version.outputs.version }}.tar.gz
+          if-no-files-found: error
+      - name: attach to the GitHub release
+        if: needs.version.outputs.dry == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --title "Kairos $VERSION" --notes ""
+          gh release upload "$GITHUB_REF_NAME" "kairos-dist-$VERSION.tar.gz" --clobber

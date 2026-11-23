@@ -1,0 +1,15 @@
+[package]
+name = "kairos-release"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "kairos-release"
+path = "src/main.rs"
+
+[dependencies]
+kairos-core = { path = "../core" }
+anyhow = "=1.0.104"
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }

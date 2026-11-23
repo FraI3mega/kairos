@@ -1,0 +1,6 @@
+{
+  "uuid": "kairos-focus@obayy.dev",
+  "name": "Kairos focus",
+  "description": "Lets the Kairos desktop app see which window has focus.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51", "52"]
+}

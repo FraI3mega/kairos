@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli", "crates/agent", "crates/server", "crates/release", "crates/sim"]
+
+[workspace.package]
+version = "0.1.9"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+opt-level = 3

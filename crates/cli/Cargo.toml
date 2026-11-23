@@ -1,0 +1,25 @@
+[package]
+name = "kairos-cli"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[[bin]]
+name = "kairos"
+path = "src/main.rs"
+
+[dependencies]
+kairos-core = { path = "../core", features = ["client"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
+dirs = "=6.0.0"
+anyhow = "=1.0.104"
+base64 = "=0.22.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.190"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Environment", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }

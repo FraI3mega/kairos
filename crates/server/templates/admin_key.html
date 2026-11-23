@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <p class="crumb"><a href="/admin#programs">Admin</a> / {{ program }}</p>
+      <h1>New program key</h1>
+      <p class="sub">For {{ program }}. It's listed in Admin as <code>{{ prefix }}</code>.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section>
+    <div class="card px">
+      <p>Copy it now. Kairos only keeps a hash, so it won't be shown again.</p>
+      <div class="cmd"><code>{{ key }}</code><button type="button" class="copy" hidden>Copy</button></div>
+      <p class="muted small">Programs send it like an editor key: <code>Authorization: Bearer</code>, Basic auth or <code>?api_key=</code>. It reads any user's stats, including hidden projects, and every read is audited.</p>
+      <p><a class="btn light px" href="/admin#programs">Back to Admin</a></p>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ base.dash_js }}" nonce="{{ base.nonce }}"></script>
+{% endblock %}

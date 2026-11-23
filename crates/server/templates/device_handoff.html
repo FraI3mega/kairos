@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block meta %}<meta http-equiv="refresh" content="0;url={{ to }}">{% endblock %}
+
+{% block body %}
+  <div class="solo">
+    <div class="card px">
+      <h1>Connecting this computer</h1>
+      <p>Handing you back to Kairos on this computer. If nothing happens, click continue.</p>
+      <a class="btn px" href="{{ to }}">Continue</a>
+    </div>
+  </div>
+{% endblock %}

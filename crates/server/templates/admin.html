@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% macro users_table(list) %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Slack</th>
+        <th>Trust</th>
+        <th>Joined</th>
+        <th>Role</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in list %}
+        <tr>
+          <td>
+            <a href="/@{{ u.username }}">{{ u.username }}</a>
+            {%- if let Some(d) = u.display_name %} <span class="muted">{{ d }}</span>{% endif %}
+          </td>
+          <td>{{ u.slack_id.as_deref().unwrap_or("") }}</td>
+          <td>{{ u.trust }}</td>
+          <td>{{ u.created }}</td>
+          <td>
+            {% if u.id == me %}
+              {{ u.role }}
+            {% else %}
+              <form method="post" action="/admin/role" class="inline">
+                <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                <input type="hidden" name="username" value="{{ u.username }}">
+                <select name="role" aria-label="Role for {{ u.username }}">
+                  {% for r in roles %}
+                    <option{% if *r == u.role %} selected{% endif %}>{{ r }}</option>
+                  {% endfor %}
+                </select><button class="btn light px">Set</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{% block head %}
+  <div class="head">
+    <div>
+      <h1>Admin</h1>
+      <p class="sub">Every view and change here is written to the audit log.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block body %}
+  <section>
+    <h2>Find a user</h2>
+    <form class="card px form inline" method="get" action="/admin"><input type="text" name="q" value="{{ q }}" placeholder="username prefix, Slack ID, HCA id or email" aria-label="Search"><button class="btn px">Search</button></form>
+    {% if !q.is_empty() %}
+      <div class="card px">
+        {% if users.is_empty() %}
+          <p class="muted">No users match.</p>
+        {% else %}
+          {% call users_table(users) %}{% endcall %}
+        {% endif %}
+      </div>
+    {% endif %}
+  </section>
+  <section>
+    <h2>Reviewers and admins</h2>
+    <div class="card px">
+      {% call users_table(staff) %}{% endcall %}
+    </div>
+  </section>
+  <section id="programs">
+    <h2>Programs</h2>
+    <p class="muted">Program keys read any user's stats, including hidden projects. A new key is shown once.</p>
+    {% for p in programs %}
+      <div class="card px prog">
+        <h3>{{ p.name }} <code>{{ p.slug }}</code></h3>
+        <p class="muted small">Created {{ p.created_at }} UTC</p>
+        {% if p.keys.is_empty() %}
+          <p class="muted">No keys yet.</p>
+        {% else %}
+          <table class="table small">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Name</th>
+                <th>Created (UTC)</th>
+                <th>Last used (UTC)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for k in p.keys %}
+                <tr{% if k.revoked_at.is_some() %} class="off"{% endif %}>
+                  <td><code>{{ k.prefix }}</code></td>
+                  <td>{{ k.name.as_deref().unwrap_or("") }}</td>
+                  <td>{{ k.created_at }}</td>
+                  <td>{{ k.last_used_at.as_deref().unwrap_or("never") }}</td>
+                  <td>
+                    {% if let Some(r) = k.revoked_at %}
+                      revoked {{ r }}
+                    {% else %}
+                      <form method="post" action="/admin/programs/revoke" class="inline">
+                        <input type="hidden" name="csrf" value="{{ base.csrf }}">
+                        <input type="hidden" name="prefix" value="{{ k.prefix }}">
+                        <button class="btn light px">Revoke</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+        <form method="post" action="/admin/programs/key" class="inline">
+          <input type="hidden" name="csrf" value="{{ base.csrf }}">
+          <input type="hidden" name="slug" value="{{ p.slug }}">
+          <input type="text" name="name" maxlength="80" placeholder="Key name, like the program's server" aria-label="Name for a new {{ p.slug }} key"><button class="btn px">New key</button>
+        </form>
+      </div>
+    {% endfor %}
+    <form class="card px form" method="post" action="/admin/programs">
+      <input type="hidden" name="csrf" value="{{ base.csrf }}">
+      <h3>New program</h3>
+      <label>Slug<input type="text" name="slug" required minlength="2" maxlength="40" pattern="[a-z0-9][a-z0-9\-]{1,39}" placeholder="high-seas" autocomplete="off"></label><label>Name<input type="text" name="name" required maxlength="80" placeholder="High Seas" autocomplete="off"></label><button class="btn px">Create program</button>
+    </form>
+  </section>
+  <section>
+    <h2>Audit log</h2>
+    <div class="card px">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>When (UTC)</th>
+            <th>Who</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in audit %}
+            <tr>
+              <td>{{ a.at }}</td>
+              <td>{{ a.actor }}</td>
+              <td>{{ a.action }}</td>
+              <td>{{ a.target }}</td>
+              <td><code>{{ a.detail }}</code></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

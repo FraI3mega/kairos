@@ -1,0 +1,11 @@
+[Unit]
+Description=Kairos focus time tracker
+
+[Service]
+ExecStart=%h/.cargo/bin/kairosd
+Restart=on-failure
+RestartSec=5
+RestartForceExitStatus=75
+
+[Install]
+WantedBy=default.target
