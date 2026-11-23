@@ -1,10 +1,10 @@
-# Installs Kairos for the current user: irm https://kairos.obayy.dev/install.ps1 | iex
+# Installs Kairos for the current user: irm https://kairos.hackclub.com/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('kairos-' + [guid]::NewGuid().ToString('N'))
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $server = 'https://kairos.obayy.dev'
+    $server = 'https://kairos.hackclub.com'
     if ($env:KAIROS_SERVER) { $server = $env:KAIROS_SERVER.TrimEnd('/') }
     if ($env:PROCESSOR_ARCHITECTURE -eq 'x86' -and -not $env:PROCESSOR_ARCHITEW6432) {
         throw 'Kairos needs a 64-bit version of Windows.'

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_SERVER: &str = "https://kairos.obayy.dev";
+pub const DEFAULT_SERVER: &str = "https://kairos.hackclub.com";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Account {

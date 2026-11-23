@@ -1,8 +1,8 @@
 #!/bin/sh
-# Installs Kairos for the current user: curl -fsSL https://kairos.obayy.dev/install.sh | sh
+# Installs Kairos for the current user: curl -fsSL https://kairos.hackclub.com/install.sh | sh
 set -eu
 
-server="${KAIROS_SERVER:-https://kairos.obayy.dev}"
+server="${KAIROS_SERVER:-https://kairos.hackclub.com}"
 server="${server%/}"
 
 fail() {

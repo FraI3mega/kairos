@@ -33,9 +33,9 @@ test('focus time reads like the CLI', () => {
 test('the dashboard link uses the account server only when it is a web address', () => {
   assert.equal(dashboardUrl('https://kairos.example.org/'), 'https://kairos.example.org/me');
   assert.equal(dashboardUrl('http://localhost:8080'), 'http://localhost:8080/me');
-  assert.equal(dashboardUrl('javascript:alert(1)'), 'https://kairos.obayy.dev/me');
-  assert.equal(dashboardUrl(null), 'https://kairos.obayy.dev/me');
-  assert.equal(dashboardUrl(undefined), 'https://kairos.obayy.dev/me');
+  assert.equal(dashboardUrl('javascript:alert(1)'), 'https://kairos.hackclub.com/me');
+  assert.equal(dashboardUrl(null), 'https://kairos.hackclub.com/me');
+  assert.equal(dashboardUrl(undefined), 'https://kairos.hackclub.com/me');
 });
 
 test('the pause note only shows while a pause is running', () => {

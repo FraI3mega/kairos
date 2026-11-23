@@ -1,4 +1,4 @@
-const DEFAULT_SERVER = 'https://kairos.obayy.dev';
+const DEFAULT_SERVER = 'https://kairos.hackclub.com';
 
 export function focusTime(secs) {
   const minutes = Math.round(Math.max(0, Number(secs) || 0) / 60);

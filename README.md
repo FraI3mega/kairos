@@ -7,13 +7,13 @@ Kairos tracks your focus time while you build with AI: writing prompts, reading 
 Windows (PowerShell):
 
 ```
-irm https://kairos.obayy.dev/install.ps1 | iex
+irm https://kairos.hackclub.com/install.ps1 | iex
 ```
 
 macOS and Linux:
 
 ```
-curl -fsSL https://kairos.obayy.dev/install.sh | sh
+curl -fsSL https://kairos.hackclub.com/install.sh | sh
 ```
 
 It installs for your user only, starts when you log in, and opens your browser to connect your account. Open a new terminal afterwards to use the `kairos` command.

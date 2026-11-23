@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(say("server answered 503 Service Unavailable"), "Can't upload: server answered 503 Service Unavailable");
         assert_eq!(say("server answered 400 Bad Request: {\"error\":\"x\"}"), "Can't upload: server answered 400 Bad Request");
         assert_eq!(
-            say("error sending request for url (https://kairos.obayy.dev/api/v1/events)"),
+            say("error sending request for url (https://kairos.hackclub.com/api/v1/events)"),
             "Can't upload: can't reach the server"
         );
         assert_eq!(say("saving upload.json: disk full"), "Can't upload: unexpected error");
