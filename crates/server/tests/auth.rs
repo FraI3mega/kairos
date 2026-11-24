@@ -32,7 +32,7 @@ async fn mock_oidc_sign_in_end_to_end() {
     assert_eq!(row.get::<_, Option<String>>(4).as_deref(), Some("verified"));
     assert!(row.get::<_, bool>(5));
     assert!(row.get::<_, String>(6).starts_with("ident!"));
-    assert_eq!(c.query_one("SELECT count(*) FROM auth_flows", &[]).await.unwrap().get::<_, i64>(0), 0);
+    assert_eq!(c.query_one("SELECT count(*) FROM auth_flows WHERE user_id IS NULL", &[]).await.unwrap().get::<_, i64>(0), 0);
 
     let me = b.get("/me").await;
     assert_eq!(me.status, StatusCode::OK);
@@ -83,6 +83,45 @@ async fn sign_in_rejects_bad_state_nonce_and_pkce() {
 
     assert_eq!(app.count("SELECT count(*) FROM web_sessions WHERE user_id <> $1", 0).await, 1);
     assert_eq!(app.count("SELECT count(*) FROM users WHERE id <> $1", 0).await, 1);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_callback_the_browser_asked_for_twice_signs_in() {
+    let app = TestApp::new().await;
+    let mut b = app.browser();
+    let cb = b.authorize("Ada Lovelace", "ada@example.com").await;
+    let dropped = b.jar.clone();
+    assert_eq!(b.get(&cb).await.status, StatusCode::SEE_OTHER);
+
+    b.jar = dropped.clone();
+    assert_eq!(b.get("/me").await.status, StatusCode::SEE_OTHER, "the first answer never reached the browser");
+    let again = b.get(&cb).await;
+    assert_eq!(again.status, StatusCode::SEE_OTHER, "{}", again.body);
+    assert_eq!(again.location(), "/me");
+    assert_eq!(b.get("/me").await.status, StatusCode::OK);
+    assert_eq!(app.count("SELECT count(*) FROM users WHERE id <> $1", 0).await, 1);
+
+    b.jar = dropped.clone();
+    let third = b.get(&cb).await;
+    assert_eq!(third.status, StatusCode::BAD_REQUEST, "one repeat only: {}", third.body);
+
+    let mut late = app.browser();
+    let cb = late.authorize("Bea Hacker", "bea@example.com").await;
+    let dropped = late.jar.clone();
+    assert_eq!(late.get(&cb).await.status, StatusCode::SEE_OTHER);
+    app.exec("UPDATE auth_flows SET expires_at = now() - interval '1 second'").await;
+    late.jar = dropped;
+    let res = late.get(&cb).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "a minute later: {}", res.body);
+
+    let mut other = app.browser();
+    let theirs = other.authorize("Cy Stranger", "cy@example.com").await;
+    let cb = b.authorize("Ada Lovelace", "ada@example.com").await;
+    assert_eq!(b.get(&cb).await.status, StatusCode::SEE_OTHER);
+    let stolen = other.get(&cb).await;
+    assert_eq!(stolen.status, StatusCode::BAD_REQUEST, "another browser with the same link: {}", stolen.body);
+    assert_eq!(other.get(&theirs).await.status, StatusCode::SEE_OTHER);
     app.finish().await;
 }
 

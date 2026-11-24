@@ -16,6 +16,7 @@ use crate::St;
 
 pub const SESSION_DAYS: i64 = 30;
 const FLOW_SECS: i64 = 600;
+const REPEAT_SECS: i64 = 60;
 pub const SCOPES: &str = "openid profile email slack_id verification_status";
 
 #[derive(Clone, Debug)]
@@ -219,7 +220,7 @@ pub async fn callback(State(st): State<St>, h: HeaderMap, Query(q): Query<Callba
         .get()
         .await?
         .query_opt(
-            "DELETE FROM auth_flows WHERE state_hash = $1 AND expires_at > now() RETURNING nonce, verifier, next",
+            "DELETE FROM auth_flows WHERE state_hash = $1 AND expires_at > now() RETURNING nonce, verifier, next, user_id",
             &[&hash(&saved)],
         )
         .await?
@@ -227,6 +228,9 @@ pub async fn callback(State(st): State<St>, h: HeaderMap, Query(q): Query<Callba
     let (nonce, verifier, next): (String, String, String) = (flow.get(0), flow.get(1), flow.get(2));
     if q.error.is_some() {
         return Err(err(StatusCode::BAD_REQUEST, "sign-in was cancelled"));
+    }
+    if let Some(user_id) = flow.get::<_, Option<i64>>(3) {
+        return sign_in(&st, &h, user_id, &next).await;
     }
     let code = q.code.filter(|c| !c.is_empty() && c.len() <= 512).ok_or_else(|| err(StatusCode::BAD_REQUEST, "missing code"))?;
     let failed = |e: anyhow::Error| {
@@ -240,6 +244,17 @@ pub async fn callback(State(st): State<St>, h: HeaderMap, Query(q): Query<Callba
         return Err(failed(anyhow::anyhow!("userinfo sub does not match the id token")));
     }
     let user_id = accounts::upsert(&st, &Identity::from(info)).await?;
+    // The browser may ask for this callback again and drop this answer, session cookie included. It still holds the
+    // flow cookie then, so the same request once more within REPEAT_SECS signs the same person in.
+    st.pool
+        .get()
+        .await?
+        .execute(
+            "INSERT INTO auth_flows (state_hash, nonce, verifier, next, expires_at, user_id)
+             VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5), $6)",
+            &[&hash(&saved), &nonce, &verifier, &next, &(REPEAT_SECS as f64), &user_id],
+        )
+        .await?;
     sign_in(&st, &h, user_id, &next).await
 }
 

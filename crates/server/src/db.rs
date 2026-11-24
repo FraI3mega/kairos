@@ -14,6 +14,7 @@ const MIGRATIONS: &[(i32, &str, &str)] = &[
     (7, "project_aliases", include_str!("../migrations/0007_project_aliases.sql")),
     (8, "departed", include_str!("../migrations/0008_departed.sql")),
     (9, "device_grants", include_str!("../migrations/0009_device_grants.sql")),
+    (10, "sign_in_repeat", include_str!("../migrations/0010_sign_in_repeat.sql")),
 ];
 const MIGRATION_LOCK: i64 = 0x6b61_6972_6f73;
 
