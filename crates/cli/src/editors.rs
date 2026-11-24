@@ -1,7 +1,9 @@
 use std::ffi::OsString;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,22 +18,24 @@ const JETBRAINS_PLUGIN: &str = "com.wakatime.intellij.plugin";
 const ADDED: &str = "editor-plugins.json";
 /// How long a JetBrains launcher that hands off and returns early gets to finish putting the plugin in.
 const JETBRAINS_WAIT: Duration = Duration::from_secs(30);
+/// An editor's command line prints its extensions in a second or two.
+const LIST_WAIT: Duration = Duration::from_secs(20);
+const CHANGE_WAIT: Duration = Duration::from_secs(120);
 
 struct Code {
     name: &'static str,
     cli: &'static str,
-    home_dir: &'static str,
     mac_app: &'static str,
     win_folder: &'static str,
 }
 
 const CODE: [Code; 6] = [
-    Code { name: "VS Code", cli: "code", home_dir: ".vscode", mac_app: "Visual Studio Code", win_folder: "Microsoft VS Code" },
-    Code { name: "Cursor", cli: "cursor", home_dir: ".cursor", mac_app: "Cursor", win_folder: "cursor" },
-    Code { name: "Windsurf", cli: "windsurf", home_dir: ".windsurf", mac_app: "Windsurf", win_folder: "Windsurf" },
-    Code { name: "Antigravity", cli: "antigravity", home_dir: ".antigravity", mac_app: "Antigravity", win_folder: "Antigravity" },
-    Code { name: "VSCodium", cli: "codium", home_dir: ".vscode-oss", mac_app: "VSCodium", win_folder: "VSCodium" },
-    Code { name: "Trae", cli: "trae", home_dir: ".trae", mac_app: "Trae", win_folder: "Trae" },
+    Code { name: "VS Code", cli: "code", mac_app: "Visual Studio Code", win_folder: "Microsoft VS Code" },
+    Code { name: "Cursor", cli: "cursor", mac_app: "Cursor", win_folder: "cursor" },
+    Code { name: "Windsurf", cli: "windsurf", mac_app: "Windsurf", win_folder: "Windsurf" },
+    Code { name: "Antigravity", cli: "antigravity", mac_app: "Antigravity", win_folder: "Antigravity" },
+    Code { name: "VSCodium", cli: "codium", mac_app: "VSCodium", win_folder: "VSCodium" },
+    Code { name: "Trae", cli: "trae", mac_app: "Trae", win_folder: "Trae" },
 ];
 
 struct JetBrains {
@@ -105,7 +109,7 @@ pub fn remove_added() {
 
 fn take_out(added: &Added) -> bool {
     match added {
-        Added::Extension { cli, id, .. } => !cli.exists() || run(cli, &["--uninstall-extension", id]),
+        Added::Extension { cli, id, .. } => !cli.exists() || code(cli, &["--uninstall-extension", id], CHANGE_WAIT).is_some(),
         Added::Folder { path, .. } => !path.exists() || fs::remove_dir_all(path).is_ok(),
     }
 }
@@ -114,7 +118,7 @@ fn missing(home: &Path) -> Vec<Missing> {
     let mut out = Vec::new();
     for c in &CODE {
         let Some(cli) = find(c.cli, &code_fallbacks(c, home)) else { continue };
-        if !code_has_heartbeats(&cli, &home.join(c.home_dir).join("extensions")) {
+        if code_has_heartbeats(&cli) == Some(false) {
             out.push(Missing { name: c.name, cli, jetbrains: None });
         }
     }
@@ -128,7 +132,8 @@ fn missing(home: &Path) -> Vec<Missing> {
 }
 
 fn add_extension(editor: &str, cli: &Path) -> Result<Added> {
-    if !run(cli, &["--install-extension", EXTENSION]) {
+    let added = code(cli, &["--install-extension", EXTENSION], CHANGE_WAIT).is_some() && code_has_heartbeats(cli) == Some(true);
+    if !added {
         anyhow::bail!("{} --install-extension {EXTENSION} did not finish", cli.display());
     }
     Ok(Added::Extension { editor: editor.into(), cli: cli.into(), id: EXTENSION.into() })
@@ -161,27 +166,10 @@ fn sends_heartbeats(id: &str) -> bool {
     EXTENSIONS_WITH_HEARTBEATS.iter().any(|w| id.trim().eq_ignore_ascii_case(w))
 }
 
-/// The editor's own list, which also sees a portable install or another extensions folder, and the usual folder when
-/// the list can't be had.
-fn code_has_heartbeats(cli: &Path, extensions: &Path) -> bool {
-    match output(cli, &["--list-extensions"]) {
-        Some(list) => list.lines().any(sends_heartbeats),
-        None => code_has_plugin(extensions),
-    }
-}
-
-/// VS Code keeps the installed extensions in extensions.json; older versions only have their folders.
-fn code_has_plugin(extensions: &Path) -> bool {
-    if let Ok(text) = fs::read_to_string(extensions.join("extensions.json")) {
-        let list: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
-        return list.iter().filter_map(|e| e.pointer("/identifier/id")?.as_str()).any(sends_heartbeats);
-    }
-    let Ok(dir) = fs::read_dir(extensions) else { return false };
-    dir.flatten().any(|e| {
-        let name = e.file_name().to_string_lossy().to_lowercase();
-        let version = |w: &str| name.strip_prefix(w)?.strip_prefix('-').map(|v| v.starts_with(|c: char| c.is_ascii_digit()));
-        EXTENSIONS_WITH_HEARTBEATS.iter().any(|w| version(w) == Some(true))
-    })
+/// None when the program doesn't print a list of extensions. Then it isn't an editor's command line, and nothing
+/// else is run on it.
+fn code_has_heartbeats(cli: &Path) -> Option<bool> {
+    code(cli, &["--list-extensions"], LIST_WAIT).map(|list| list.lines().any(sends_heartbeats))
 }
 
 /// Where JetBrains IDEs keep each version's settings, and the plugins folder for a version's folder name.
@@ -295,9 +283,32 @@ fn run(cli: &Path, args: &[&str]) -> bool {
     command(cli, args).status().is_ok_and(|s| s.success())
 }
 
-fn output(cli: &Path, args: &[&str]) -> Option<String> {
-    let out = command(cli, args).stdout(Stdio::piped()).output().ok().filter(|o| o.status.success())?;
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+/// What an editor's command line printed, when it ended well within `wait`. A program with an editor's name can be
+/// the app itself (Antigravity 2), which opens a window for any argument and stays open. ELECTRON_RUN_AS_NODE makes
+/// such an app quit at once instead, and one that opens anyway is stopped when the wait is over.
+fn code(cli: &Path, args: &[&str], wait: Duration) -> Option<String> {
+    let mut child = command(cli, args).env("ELECTRON_RUN_AS_NODE", "1").stdout(Stdio::piped()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out.read_to_end(&mut bytes);
+        let _ = tx.send(bytes);
+    });
+    let deadline = Instant::now() + wait;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let bytes = rx.recv_timeout(Duration::from_secs(2)).ok().filter(|_| status.success())?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn load(data: &Path) -> Vec<Added> {
@@ -337,41 +348,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn vs_code_plugins_are_read_from_extensions_json_or_the_folders() {
-        let t = Temp::new("code");
-        let ext = t.0.join("extensions");
-        assert!(!code_has_plugin(&ext), "no extensions folder");
-        fs::create_dir_all(ext.join("wakatime.vscode-wakatime-25.0.0")).unwrap();
-        assert!(code_has_plugin(&ext));
-        fs::write(ext.join("extensions.json"), r#"[{"identifier":{"id":"rust-lang.rust-analyzer"}}]"#).unwrap();
-        assert!(!code_has_plugin(&ext), "extensions.json wins over a folder left behind");
-        fs::write(ext.join("extensions.json"), r#"[{"identifier":{"id":"Hackatime.hackatime-time-tracker"}}]"#).unwrap();
-        assert!(code_has_plugin(&ext));
-        fs::remove_file(ext.join("extensions.json")).unwrap();
-        fs::remove_dir(ext.join("wakatime.vscode-wakatime-25.0.0")).unwrap();
-        fs::create_dir_all(ext.join("wakatime.vscode-wakatime-themes-1.0.0")).unwrap();
-        assert!(!code_has_plugin(&ext), "another extension that starts the same way");
+    #[cfg(unix)]
+    fn script(cli: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(cli, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(cli, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn the_editors_own_list_comes_before_its_folder() {
-        use std::os::unix::fs::PermissionsExt;
+    fn an_editor_is_asked_for_its_own_list() {
         let t = Temp::new("list");
-        let ext = t.0.join("extensions");
-        fs::create_dir_all(ext.join("wakatime.vscode-wakatime-25.0.0")).unwrap();
         let cli = t.0.join("code");
-        let script = |body: &str| {
-            fs::write(&cli, format!("#!/bin/sh\n{body}\n")).unwrap();
-            fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
-        };
-        script("echo rust-lang.rust-analyzer");
-        assert!(!code_has_heartbeats(&cli, &ext), "the list wins over a folder left behind");
-        script("printf 'rust-lang.rust-analyzer\\nWakaTime.vscode-wakatime\\n'");
-        assert!(code_has_heartbeats(&cli, &ext));
-        script("exit 1");
-        assert!(code_has_heartbeats(&cli, &ext), "the folder when the list fails");
+        script(&cli, "echo rust-lang.rust-analyzer");
+        assert_eq!(code_has_heartbeats(&cli), Some(false));
+        script(&cli, "printf 'rust-lang.rust-analyzer\\nWakaTime.vscode-wakatime\\n'");
+        assert_eq!(code_has_heartbeats(&cli), Some(true));
+        script(&cli, "exit 1");
+        assert_eq!(code_has_heartbeats(&cli), None, "no list, so not an editor's command line");
+        script(&cli, "echo $ELECTRON_RUN_AS_NODE");
+        assert_eq!(code(&cli, &[], LIST_WAIT).as_deref(), Some("1\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_that_stays_open_is_stopped_and_gets_no_plugin() {
+        let t = Temp::new("open");
+        let cli = t.0.join("antigravity");
+        script(&cli, "exec sleep 30");
+        let started = Instant::now();
+        assert_eq!(code(&cli, &["--list-extensions"], Duration::from_millis(300)), None);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        script(&cli, "exit 0");
+        assert!(add_extension("Antigravity", &cli).is_err(), "it ended well and added nothing");
     }
 
     #[cfg(target_os = "linux")]
@@ -434,13 +443,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn added_plugins_are_recorded_once_and_taken_out_again() {
-        use std::os::unix::fs::PermissionsExt;
         let t = Temp::new("added");
         let data = t.0.join("data");
         let log = t.0.join("log");
         let cli = t.0.join("code");
-        fs::write(&cli, format!("#!/bin/sh\necho \"$@\" >> '{}'\n", log.display())).unwrap();
-        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        script(&cli, &format!("case $1 in --list-extensions) echo {EXTENSION} ;; *) echo \"$@\" >> '{}' ;; esac", log.display()));
 
         let a = add_extension("VS Code", &cli).unwrap();
         record(&data, a.clone()).unwrap();
