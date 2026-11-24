@@ -10,8 +10,8 @@ use crate::diag::diag;
 use crate::status::{self, Shared};
 
 const FIRST: Duration = Duration::from_secs(2 * 60);
-const EVERY: Duration = Duration::from_secs(3600);
-const RETRY: Duration = Duration::from_secs(15 * 60);
+const EVERY: Duration = Duration::from_secs(20 * 60);
+const RETRY: Duration = Duration::from_secs(5 * 60);
 /// Exit status that tells systemd (`RestartForceExitStatus=75`) or launchd (`SuccessfulExit: false`)
 /// to start the freshly installed binary.
 pub const RESTART: i32 = 75;
