@@ -19,7 +19,7 @@ anyhow = "=1.0.104"
 notify = "8"
 tiny_http = "=0.12.0"
 base64 = "=0.22.1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json", "blocking"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = [
