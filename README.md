@@ -20,7 +20,7 @@ It installs for your user only, starts when you log in, and opens your browser t
 
 ## Works with
 
-Claude Code, Codex, Cursor, GitHub Copilot, Antigravity, Gemini CLI, Cline, Roo Code, Kilo, opencode and Qwen Code, plus any editor or terminal. An optional browser extension counts the time you spend testing your app on localhost.
+Claude Code, Codex, Cursor, GitHub Copilot, Antigravity, Gemini CLI, Cline, Roo Code, Kilo, opencode, Qwen Code, Pi and Hermes Agent, plus any editor or terminal. An optional browser extension counts the time you spend testing your app on localhost.
 
 After install, WakaTime editor plugins send their heartbeats to Kairos, and Kairos passes every heartbeat on to where they went before (Hackatime for most people). Editors that have no WakaTime or Hackatime plugin yet get Hackatime's, and `kairos uninstall` takes out only the plugins Kairos added.
 
