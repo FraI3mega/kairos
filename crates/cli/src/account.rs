@@ -160,8 +160,11 @@ pub(crate) fn with_code(server: &str, data: &Path) -> Result<Account> {
 
 pub fn logout() -> Result<()> {
     let dir = paths::data_dir();
+    let acct = account::load(&dir);
     if account::remove(&dir)? {
-        let _ = fs::remove_file(upload::state_path(&dir));
+        if let Some(a) = &acct {
+            pairing::give_up(a);
+        }
         println!("Signed out");
     } else {
         println!("Not signed in");

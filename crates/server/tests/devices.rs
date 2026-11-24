@@ -208,6 +208,83 @@ async fn revoked_devices_get_401() {
     app.finish().await;
 }
 
+async fn me(app: &TestApp, token: &str) -> common::Resp {
+    app.api(Method::GET, "/api/v1/device/me", None, Some(token)).await
+}
+
+/// Signs a computer in with a code, as `kairosd` does. `last` is the last event it uploaded.
+async fn pair_again(b: &mut common::Browser<'_>, app: &TestApp, last: Option<&str>) -> (String, bool) {
+    let s = app.api(Method::POST, "/api/v1/device/start", Some(json!({ "name": "renamed-since", "os": "linux" })), None).await.json();
+    let code = s["user_code"].as_str().unwrap().to_string();
+    let page = b.get(&format!("/device?code={code}")).await;
+    b.post("/device/approve", &[("code", &code), ("csrf", &page.csrf())]).await;
+    let p = app.api(Method::POST, "/api/v1/device/poll", Some(json!({ "poll_token": s["poll_token"], "last_hash": last })), None).await.json();
+    assert_eq!(p["status"], "approved", "{p}");
+    (p["token"].as_str().unwrap().to_string(), p["resumed"].as_bool().unwrap())
+}
+
+#[tokio::test]
+async fn a_computer_that_signs_in_again_gets_its_device_back() {
+    let app = TestApp::new().await;
+    let mut b = app.browser();
+    b.sign_in("Ada Lovelace", "ada@example.com").await;
+    let ada = user_id(&app, "ada").await;
+    let devices = "SELECT count(*) FROM devices WHERE user_id = $1";
+    let last_of = |events: &[serde_json::Value]| events.last().unwrap()["hash"].as_str().unwrap().to_string();
+
+    let first = b.pair("laptop").await;
+    let id = me(&app, &first).await.json()["device_id"].clone();
+    let mut chain = Chain::default();
+    chain.editing("acme/app", 1_773_000_000.0, 1_773_000_300.0);
+    let events = chain.take();
+    let (sent, last) = (events.len(), last_of(&events));
+    assert_eq!(upload(&app, &first, events).await.status, StatusCode::OK);
+
+    let out = app.api(Method::POST, "/api/v1/device/logout", None, Some(&first)).await;
+    assert_eq!(out.status, StatusCode::OK, "{}", out.body);
+    assert_eq!(me(&app, &first).await.status, StatusCode::UNAUTHORIZED, "logging out ends the token");
+    assert_eq!(app.api(Method::POST, "/api/v1/device/logout", None, Some(&first)).await.status, StatusCode::UNAUTHORIZED);
+
+    let (second, resumed) = pair_again(&mut b, &app, Some(&last)).await;
+    assert!(resumed);
+    assert_eq!(app.count(devices, ada).await, 1);
+    let m = me(&app, &second).await.json();
+    assert_eq!((&m["device_id"], m["events"].as_i64(), m["last_hash"].as_str()), (&id, Some(sent as i64), Some(last.as_str())));
+    assert_eq!(me(&app, &first).await.status, StatusCode::UNAUTHORIZED);
+    let c = app.st.pool.get().await.unwrap();
+    let name: String = c.query_one("SELECT name FROM devices WHERE user_id = $1", &[&ada]).await.unwrap().get(0);
+    assert_eq!(name, "laptop", "the name it had, which its owner may have chosen");
+
+    chain.editing("acme/app", 1_773_000_400.0, 1_773_000_500.0);
+    let events = chain.take();
+    let last = last_of(&events);
+    assert_eq!(upload(&app, &second, events).await.status, StatusCode::OK, "the log goes on from where it stopped");
+
+    let verifier = pkce::verifier().unwrap();
+    let page = b.get(&connect_path("50123", STATE, &pkce::challenge(&verifier))).await;
+    let to = page.body.split('"').find(|s| s.starts_with("http://127.0.0.1:")).unwrap().replace("&#38;", "&").replace("&amp;", "&");
+    let exchange = json!({ "code": query_of(&to)["code"], "verifier": verifier, "name": "laptop", "os": "linux", "last_hash": last });
+    let third = app.api(Method::POST, "/api/v1/device/exchange", Some(exchange), None).await.json();
+    assert_eq!(third["resumed"], true, "{third}");
+    assert_eq!(me(&app, &second).await.status, StatusCode::UNAUTHORIZED, "one token at a time");
+    let third = third["token"].as_str().unwrap().to_string();
+    assert_eq!(me(&app, &third).await.json()["device_id"], id);
+
+    for unknown in [None, Some("0".repeat(64)), Some("not a hash".to_string()), Some(String::new())] {
+        let (_, resumed) = pair_again(&mut b, &app, unknown.as_deref()).await;
+        assert!(!resumed, "{unknown:?}");
+    }
+    assert_eq!(app.count(devices, ada).await, 5);
+
+    let mut bea = app.browser();
+    bea.sign_in("Bea Hacker", "bea@example.com").await;
+    let (hers, resumed) = pair_again(&mut bea, &app, Some(&last)).await;
+    assert!(!resumed, "another account never gets this one's device");
+    assert_eq!(me(&app, &hers).await.json()["events"], 0);
+    assert_eq!(me(&app, &third).await.status, StatusCode::OK);
+    app.finish().await;
+}
+
 #[tokio::test]
 async fn ingest_rejects_broken_chains_and_bad_times() {
     let app = TestApp::new().await;

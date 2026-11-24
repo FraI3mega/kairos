@@ -161,6 +161,18 @@ pub fn locate(dir: &Path, hash: &str) -> Option<State> {
     found
 }
 
+/// After the last event in the log.
+pub fn end(dir: &Path) -> State {
+    let mut end = State::default();
+    scan(dir, &State::default(), |line, file, n| {
+        if let Some((_, hash)) = links(line) {
+            end = State { last_hash: Some(hash), file: Some(file.to_string()), line: n };
+        }
+        true
+    });
+    end
+}
+
 pub fn pending(dir: &Path, from: &State) -> usize {
     let mut count = 0;
     scan(dir, from, |_, _, _| {

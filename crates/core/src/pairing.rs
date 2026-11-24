@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::account::{self, Account, DEFAULT_SERVER};
+use crate::upload::State;
 use crate::{loopback, pkce, upload};
 
 #[derive(Debug)]
@@ -109,51 +110,72 @@ impl Pairing {
 
     /// One poll. Network hiccups and unreadable replies count as still pending.
     pub fn poll(&self) -> Result<Poll> {
+        Ok(self.ask(None)?.map_or(Poll::Pending, |(acct, _)| Poll::Approved(acct)))
+    }
+
+    /// The account once the code is approved, and whether the server gave this computer its device back.
+    fn ask(&self, last_hash: Option<&str>) -> Result<Option<(Account, bool)>> {
         let Ok(res) = self
             .client
             .post(format!("{}/api/v1/device/poll", self.server))
-            .json(&json!({ "poll_token": self.start.poll_token }))
+            .json(&json!({ "poll_token": self.start.poll_token, "last_hash": last_hash }))
             .send()
         else {
-            return Ok(Poll::Pending);
+            return Ok(None);
         };
         if res.status() == StatusCode::GONE {
             return Err(Expired.into());
         }
-        let Ok(v) = res.json::<Value>() else { return Ok(Poll::Pending) };
+        let Ok(v) = res.json::<Value>() else { return Ok(None) };
         if v["status"] != "approved" {
-            return Ok(Poll::Pending);
+            return Ok(None);
         }
         let (Some(token), Some(username)) = (v["token"].as_str(), v["username"].as_str()) else {
             bail!("the server approved the code but sent no token");
         };
-        Ok(Poll::Approved(Account {
-            server: self.server.clone(),
-            token: token.to_string(),
-            username: username.to_string(),
-        }))
+        let acct = Account { server: self.server.clone(), token: token.to_string(), username: username.to_string() };
+        Ok(Some((acct, v["resumed"] == true)))
     }
 
     pub fn wait(&self, dir: &Path) -> Result<Account> {
         let deadline = Instant::now() + Duration::from_secs(self.start.expires_in);
+        let last = State::load(dir).last_hash;
         loop {
             thread::sleep(self.interval);
             if Instant::now() > deadline {
                 return Err(Expired.into());
             }
-            if let Poll::Approved(acct) = self.poll()? {
-                keep(dir, &acct)?;
+            if let Some((acct, resumed)) = self.ask(last.as_deref())? {
+                keep(dir, &acct, resumed)?;
                 return Ok(acct);
             }
         }
     }
 }
 
-/// Drops the upload cursor so the new device starts from a clean state.
-fn keep(dir: &Path, acct: &Account) -> Result<()> {
-    account::save(dir, acct)?;
-    let _ = fs::remove_file(upload::state_path(dir));
-    Ok(())
+/// Saves the account and leaves the upload cursor where its device starts. The server gives a computer its device back
+/// when the account has one that ends on the last event the computer uploaded, and then uploads go on from there. A new
+/// device gets the whole log when none of it was uploaded, and only what comes from now on when it was: those events
+/// are on another device already, maybe another account's. The cursor is written first, so kairosd never uploads for
+/// the new account from the old place.
+fn keep(dir: &Path, acct: &Account, resumed: bool) -> Result<()> {
+    if !resumed {
+        match State::load(dir).last_hash {
+            Some(_) => upload::end(dir).save(dir).context("saving upload.json")?,
+            None => {
+                let _ = fs::remove_file(upload::state_path(dir));
+            }
+        }
+    }
+    account::save(dir, acct)
+}
+
+/// `kairos logout`: tells the server this computer gave its token up, so its device stops counting as connected.
+pub fn give_up(acct: &Account) {
+    let Ok(client) = Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("kairos/", env!("CARGO_PKG_VERSION"))).build() else {
+        return;
+    };
+    let _ = client.post(format!("{}/api/v1/device/logout", acct.server.trim_end_matches('/'))).bearer_auth(&acct.token).send();
 }
 
 /// Signing in through the browser, which comes back to this computer on 127.0.0.1 (see `loopback`) with a code that only
@@ -192,7 +214,13 @@ impl Connect {
         let res = self
             .client
             .post(format!("{}/api/v1/device/exchange", self.server))
-            .json(&json!({ "code": code, "verifier": self.verifier, "name": hostname(), "os": std::env::consts::OS }))
+            .json(&json!({
+                "code": code,
+                "verifier": self.verifier,
+                "name": hostname(),
+                "os": std::env::consts::OS,
+                "last_hash": State::load(dir).last_hash,
+            }))
             .send()
             .with_context(|| format!("contacting {}", self.server))?;
         let status = res.status();
@@ -204,7 +232,7 @@ impl Connect {
             bail!("the server signed you in but sent no token");
         };
         let acct = Account { server: self.server.clone(), token: token.to_string(), username: username.to_string() };
-        keep(dir, &acct)?;
+        keep(dir, &acct, v["resumed"] == true)?;
         Ok(acct)
     }
 }
@@ -215,10 +243,19 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::sync::mpsc;
+
+    use crate::event::{Event, Kind, GENESIS};
 
     fn fake_server(replies: Vec<(u16, String)>) -> String {
+        fake_server_seen(replies).0
+    }
+
+    /// Also hands over the body of each request it answered.
+    fn fake_server_seen(replies: Vec<(u16, String)>) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let (tx, seen) = mpsc::channel();
         thread::spawn(move || {
             for (code, body) in replies {
                 let Ok((mut sock, _)) = listener.accept() else { return };
@@ -240,6 +277,7 @@ mod tests {
                     .unwrap_or(0);
                 let mut rest = vec![0u8; len.saturating_sub(buf.len() - head_end)];
                 let _ = sock.read_exact(&mut rest);
+                let _ = tx.send(String::from_utf8_lossy(&[&buf[head_end..], &rest[..]].concat()).into_owned());
                 let reply = format!(
                     "HTTP/1.1 {code} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -247,7 +285,7 @@ mod tests {
                 let _ = sock.write_all(reply.as_bytes());
             }
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), seen)
     }
 
     fn start_reply() -> (u16, String) {
@@ -290,6 +328,53 @@ mod tests {
         assert_eq!(acct, Account { server: server.clone(), token: "kd_1".into(), username: "ada".into() });
         assert_eq!(account::load(&dir), Some(acct));
         assert!(!upload::state_path(&dir).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A log of five events of which three were uploaded.
+    fn uploaded_some(name: &str) -> (PathBuf, State, State) {
+        let dir = temp(name);
+        fs::create_dir_all(&dir).unwrap();
+        let (mut prev, mut text, mut hashes) = (GENESIS.to_string(), String::new(), Vec::new());
+        for i in 0..5 {
+            let mut e = Event::new(1000.0 + i as f64, None, Kind::Present { input: None });
+            e.seal(&prev);
+            prev = e.hash.clone();
+            text.push_str(&serde_json::to_string(&e).unwrap());
+            text.push('\n');
+            hashes.push(e.hash);
+        }
+        let file = "events-2026-11-19.jsonl";
+        fs::write(dir.join(file), text).unwrap();
+        let at = |n: usize| State { last_hash: Some(hashes[n - 1].clone()), file: Some(file.into()), line: n };
+        at(3).save(&dir).unwrap();
+        (dir, at(3), at(5))
+    }
+
+    #[test]
+    fn a_computer_given_its_device_back_uploads_on_from_where_it_stopped() {
+        let (dir, cursor, _) = uploaded_some("resumed");
+        let last = format!("\"last_hash\":\"{}\"", cursor.last_hash.as_deref().unwrap());
+        let approved = json!({ "status": "approved", "token": "kd_1", "username": "ada", "resumed": true }).to_string();
+        let (server, seen) = fake_server_seen(vec![start_reply(), (200, approved), (200, json!({ "token": "kd_2", "username": "ada", "resumed": true }).to_string())]);
+        pairing(&server).wait(&dir).unwrap();
+        assert_eq!(State::load(&dir), cursor);
+        let client = Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        Connect::with(client, &server).unwrap().finish("kg_1", &dir).unwrap();
+        assert_eq!(State::load(&dir), cursor);
+        let bodies: Vec<String> = seen.try_iter().collect();
+        assert!(bodies[1].contains(&last) && bodies[2].contains(&last), "{bodies:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_device_starts_after_a_log_that_was_uploaded_elsewhere() {
+        let (dir, _, end) = uploaded_some("elsewhere");
+        let server = fake_server(vec![(200, json!({ "token": "kd_2", "username": "bea" }).to_string())]);
+        let client = Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        Connect::with(client, &server).unwrap().finish("kg_1", &dir).unwrap();
+        assert_eq!(State::load(&dir), end);
+        assert!(upload::next_batch(&dir, &end, 10).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 

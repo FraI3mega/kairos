@@ -129,6 +129,7 @@ pub fn router(st: St) -> Router {
         .route("/api/v1/device/poll", post(api::device::poll).layer(DefaultBodyLimit::max(4 * KB)))
         .route("/api/v1/device/exchange", post(api::device::exchange).layer(DefaultBodyLimit::max(4 * KB)))
         .route("/api/v1/device/me", get(api::device::me))
+        .route("/api/v1/device/logout", post(api::device::logout))
         .route("/api/v1/events", post(api::events::upload).layer(DefaultBodyLimit::max(8 * KB * KB)))
         .route("/api/v1/users/{username}/spans", get(api::stats::spans))
         .route("/api/hackatime/v1/users/current/heartbeats", post(wakatime::one))

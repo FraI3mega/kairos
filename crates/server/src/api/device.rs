@@ -40,15 +40,50 @@ fn name_and_os(name: &str, os: &str) -> (String, String) {
     (Some(clean(name, 64)).filter(|n| !n.is_empty()).unwrap_or_else(|| "computer".into()), clean(os, 16))
 }
 
-async fn mint(tx: &tokio_postgres::Transaction<'_>, user_id: i64, name: &str, os: &str, version: &Option<String>) -> Res<(String, String)> {
+/// What a computer gets when it signs in.
+struct Minted {
+    token: String,
+    username: String,
+    /// The computer got a device it had before, and uploads go on from where they stopped.
+    resumed: bool,
+}
+
+struct New<'a> {
+    name: &'a str,
+    os: &'a str,
+    version: &'a Option<String>,
+    /// The last event the computer uploaded, to anyone.
+    last_hash: Option<&'a str>,
+}
+
+/// A computer signing in again gets its device back: the one of this account that ends on the last event the computer
+/// uploaded, with a new token and with whatever disconnected it undone. Otherwise every sign-in would make another
+/// device and the computer would send its whole log again.
+async fn mint(tx: &tokio_postgres::Transaction<'_>, user_id: i64, new: New<'_>) -> Res<Minted> {
     let token = random_token("kd_")?;
-    tx.execute(
-        "INSERT INTO devices (user_id, token_hash, name, os, client_version, last_seen_at) VALUES ($1, $2, $3, $4, $5, now())",
-        &[&user_id, &hash(&token), &name, &os, version],
-    )
-    .await?;
+    let token_hash = hash(&token);
+    let last = new.last_hash.filter(|h| !h.is_empty() && h.len() <= 128 && h.bytes().all(|b| b.is_ascii_alphanumeric()));
+    let resumed = match last {
+        Some(last) => {
+            tx.execute(
+                "UPDATE devices SET token_hash = $3, revoked_at = NULL, client_version = COALESCE($4, client_version), last_seen_at = now()
+                 WHERE id = (SELECT id FROM devices WHERE user_id = $1 AND head = $2 ORDER BY revoked_at IS NOT NULL, id DESC LIMIT 1 FOR UPDATE)",
+                &[&user_id, &last, &token_hash, new.version],
+            )
+            .await?
+                == 1
+        }
+        None => false,
+    };
+    if !resumed {
+        tx.execute(
+            "INSERT INTO devices (user_id, token_hash, name, os, client_version, last_seen_at) VALUES ($1, $2, $3, $4, $5, now())",
+            &[&user_id, &token_hash, &new.name, &new.os, new.version],
+        )
+        .await?;
+    }
     let username: String = tx.query_one("SELECT username FROM users WHERE id = $1", &[&user_id]).await?.get(0);
-    Ok((token, username))
+    Ok(Minted { token, username, resumed })
 }
 
 #[derive(Deserialize)]
@@ -85,6 +120,8 @@ pub async fn start(State(st): State<St>, h: HeaderMap, ext: axum::http::Extensio
 #[derive(Deserialize)]
 pub struct PollReq {
     poll_token: String,
+    #[serde(default)]
+    last_hash: Option<String>,
 }
 
 fn gone() -> Response {
@@ -110,9 +147,9 @@ pub async fn poll(State(st): State<St>, Json(r): Json<PollReq>) -> Res<Response>
         .await?;
     if let Some(row) = row {
         let (user_id, name, os, version): (i64, String, String, Option<String>) = (row.get(0), row.get(1), row.get(2), row.get(3));
-        let (token, username) = mint(&tx, user_id, &name, &os, &version).await?;
+        let m = mint(&tx, user_id, New { name: &name, os: &os, version: &version, last_hash: r.last_hash.as_deref() }).await?;
         tx.commit().await?;
-        return Ok(Json(json!({ "status": "approved", "token": token, "username": username })).into_response());
+        return Ok(Json(json!({ "status": "approved", "token": m.token, "username": m.username, "resumed": m.resumed })).into_response());
     }
     let pending = tx.query_opt("SELECT 1 FROM device_codes WHERE poll_hash = $1 AND expires_at > now()", &[&poll_hash]).await?;
     tx.commit().await?;
@@ -128,6 +165,8 @@ pub struct ExchangeReq {
     verifier: String,
     name: String,
     os: String,
+    #[serde(default)]
+    last_hash: Option<String>,
 }
 
 /// The second half of `/device/connect`: the program that opened it trades the code it got on 127.0.0.1 for a device
@@ -151,9 +190,18 @@ pub async fn exchange(State(st): State<St>, h: HeaderMap, ext: axum::http::Exten
         return Err(refused());
     }
     let (name, os) = name_and_os(&r.name, &r.os);
-    let (token, username) = mint(&tx, user_id, &name, &os, &client_version(&h)).await?;
+    let m = mint(&tx, user_id, New { name: &name, os: &os, version: &client_version(&h), last_hash: r.last_hash.as_deref() }).await?;
     tx.commit().await?;
-    Ok(Json(json!({ "token": token, "username": username })))
+    Ok(Json(json!({ "token": m.token, "username": m.username, "resumed": m.resumed })))
+}
+
+/// `kairos logout`: the computer gives up its token. The device and its events stay, and it gets the device back when
+/// it signs in again.
+pub async fn logout(State(st): State<St>, h: HeaderMap) -> Res<Json<Value>> {
+    let d = auth(&st, &h).await?;
+    let c = st.pool.get().await?;
+    c.execute("UPDATE devices SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", &[&d.id]).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 pub async fn me(State(st): State<St>, h: HeaderMap) -> Res<Json<Value>> {
