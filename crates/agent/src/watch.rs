@@ -30,8 +30,15 @@ pub enum Watch {
 fn ignored(path: &Path) -> bool {
     path.components().any(|c| IGNORED_DIRS.iter().any(|d| c.as_os_str() == *d))
         || path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-            n.ends_with('~') || n.ends_with(".swp") || n.ends_with(".swx") || n.ends_with(".tmp") || n == "4913"
+            n.ends_with('~') || n.ends_with(".swp") || n.ends_with(".swx") || n.ends_with(".tmp") || n == "4913" || atomic_write(n)
         })
+}
+
+// Claude Code writes `a.rs.tmp.<pid>.<hex>` and renames it over `a.rs`.
+fn atomic_write(name: &str) -> bool {
+    name.rsplit_once(".tmp.").and_then(|(_, rest)| rest.split_once('.')).is_some_and(|(pid, id)| {
+        !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
+    })
 }
 
 struct State {
@@ -154,6 +161,16 @@ mod tests {
         assert_eq!(saves.kind(root), Some(Kind::FileSave { count: 2, paths: vec!["z".repeat(MAX_PATH_LEN)] }));
         assert_eq!(relative(root, root), None);
         assert_eq!(relative(root, Path::new("other/f")), None);
+    }
+
+    #[test]
+    fn temporary_files_of_an_atomic_write_are_not_saves() {
+        for name in ["hello.py.tmp.244168.6a3edd58acb0", "hello.py.tmp.255391.1795562851350", "hello.py.tmp.48213.9f3ac1d2", "a.rs.tmp.7.0b", "notes.tmp", "a.rs~", ".a.rs.swp"] {
+            assert!(ignored(Path::new("/w/p/src").join(name).as_path()), "{name}");
+        }
+        for name in ["hello.py", "a.tmp.rs", "a.tmp.c", "a.tmp.db", "a.tmp.12", "a.tmp.", "a.tmp.1..2", "a.tmp.x.1f", "tmp.123", "template.html"] {
+            assert!(!ignored(Path::new("/w/p/src").join(name).as_path()), "{name}");
+        }
     }
 
     #[test]
