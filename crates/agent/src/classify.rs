@@ -12,7 +12,8 @@ const TERMINALS: &[&str] = &[
     "xfce4-terminal", "lxterminal", "sakura", "rio", "contour", "com.mitchellh.ghostty",
     "org.wezfurlong.wezterm", "windowsterminal", "openconsole", "conhost", "mintty", "tabby", "hyper",
     "warp", "iterm2", "com.apple.terminal", "com.googlecode.iterm2", "dev.warp.warp", "net.kovidgoyal.kitty",
-    "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper",
+    "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper", "ptyxis", "org.gnome.ptyxis", "kgx",
+    "org.gnome.console", "cosmic-term", "com.system76.cosmicterm", "mate-terminal", "qterminal", "guake", "yakuake",
 ];
 const CONSOLE_HOSTS: &[&str] = &["conhost", "openconsole"];
 pub const CONSOLE_WINDOW: &str = "ConsoleWindowClass";
@@ -28,7 +29,7 @@ const AGENT_APPS: &[&str] = &[
     "antigravity", "com.anthropic.claude", "claude-desktop", "com.t3tools.t3code", "t3code", "chatgpt",
     "com.anthropic.claudefordesktop", "com.openai.chat",
 ];
-const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode"];
+const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot"];
 const EDITORS: &[&str] = &[
     "code", "code-oss", "vscode", "codium", "vscodium", "cursor", "windsurf", "zed", "zeditor",
     "zed-editor", "dev.zed.zed", "nvim", "neovide", "vim", "gvim", "nano", "helix", "hx", "emacs",
@@ -489,6 +490,14 @@ mod tests {
         let Classified { class, project, .. } = classify_with(&f, 10, "", "pwsh");
         assert_eq!(class, Class::AgentTerminal);
         assert_eq!(project.unwrap().id, "proj");
+    }
+
+    #[test]
+    fn every_agent_cli_with_a_reader_counts() {
+        for cli in ["claude", "codex.exe", "opencode", "agy", "agy.exe", "gemini", "qwen", "kilo", "copilot"] {
+            let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, cli)]);
+            assert_eq!(class_of(&f, 10, ""), Class::AgentTerminal, "{cli}");
+        }
     }
 
     #[test]
