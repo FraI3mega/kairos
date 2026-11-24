@@ -45,11 +45,28 @@ fn secs(ms: i64) -> f64 {
 }
 
 // opencode 1.x keeps message/part tables; 2.x writes session_v2/session_message (assistant parts
-// live inside the message JSON) and leaves the old tables as a stale copy.
+// live inside the message JSON) and leaves the old tables as a stale copy. 2.4 saves each assistant
+// part as a session_part row instead and leaves the message's content empty.
 #[derive(Clone, Copy, PartialEq)]
 enum Schema {
     Legacy,
-    V2,
+    V2 { rows: bool },
+}
+
+// A session's assistant parts in either place. One message can hold both, the rows first.
+fn v2_parts(rows: bool) -> String {
+    let inline = "SELECT m.id AS msg, m.seq AS seq, 1 AS src, c.key AS ord, json_extract(c.value, '$.type') AS type,
+            c.value AS value, m.time_created AS created, m.time_updated AS updated
+         FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id = ?1 AND m.type = 'assistant'";
+    if !rows {
+        return format!("({inline})");
+    }
+    format!(
+        "(SELECT m.id AS msg, m.seq AS seq, 0 AS src, p.ordinal AS ord, p.type AS type, p.data AS value,
+            m.time_created AS created, p.time_updated AS updated
+         FROM session_part p JOIN session_message m ON m.id = p.message_id WHERE p.session_id = ?1 AND m.type = 'assistant'
+         UNION ALL {inline})"
+    )
 }
 
 struct MsgRow {
@@ -89,7 +106,7 @@ impl Schema {
             c.query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1", [t], |_| Ok(())).is_ok()
         };
         if has("session_message") && has("session_v2") {
-            Some(Schema::V2)
+            Some(Schema::V2 { rows: has("session_part") })
         } else if has("session") && has("message") && has("part") {
             Some(Schema::Legacy)
         } else {
@@ -102,7 +119,11 @@ impl Schema {
             Schema::Legacy => {
                 "SELECT MAX(time_created), MAX(time_updated) FROM message"
             }
-            Schema::V2 => "SELECT MAX(time_created), MAX(time_updated) FROM session_message",
+            Schema::V2 { rows: false } => "SELECT MAX(time_created), MAX(time_updated) FROM session_message",
+            Schema::V2 { rows: true } => {
+                "SELECT MAX(time_created), MAX(MAX(time_updated), COALESCE((SELECT MAX(time_updated) FROM session_part), 0))
+                 FROM session_message"
+            }
         };
         c.query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
     }
@@ -115,9 +136,14 @@ impl Schema {
                     EXISTS (SELECT 1 FROM message m WHERE m.session_id = s.id AND m.time_updated > ?1)
                     OR EXISTS (SELECT 1 FROM part p WHERE p.session_id = s.id AND p.time_updated > ?1))"
             }
-            Schema::V2 => {
+            Schema::V2 { rows: false } => {
                 "SELECT s.id, s.directory, s.parent_id IS NOT NULL FROM session_v2 s WHERE
                     EXISTS (SELECT 1 FROM session_message m WHERE m.session_id = s.id AND m.time_updated > ?1)"
+            }
+            Schema::V2 { rows: true } => {
+                "SELECT s.id, s.directory, s.parent_id IS NOT NULL FROM session_v2 s WHERE (
+                    EXISTS (SELECT 1 FROM session_message m WHERE m.session_id = s.id AND m.time_updated > ?1)
+                    OR EXISTS (SELECT 1 FROM session_part p WHERE p.session_id = s.id AND p.time_updated > ?1))"
             }
         };
         let mut st = c.prepare(sql)?;
@@ -127,7 +153,7 @@ impl Schema {
 
     // None where the table has no version column (older builds, forks).
     fn version(self, c: &Connection, sid: &str) -> Option<String> {
-        let table = if self == Schema::V2 { "session_v2" } else { "session" };
+        let table = if self == Schema::Legacy { "session" } else { "session_v2" };
         c.query_row(&format!("SELECT version FROM {table} WHERE id = ?1"), [sid], |r| r.get(0)).ok().flatten()
     }
 
@@ -138,15 +164,14 @@ impl Schema {
                 "p.id",
                 "json_extract(p.data, '$.tool')",
                 "json_extract(p.data, '$.state.time.end')",
-                "FROM part p WHERE p.session_id = ?1 AND p.time_updated >= ?2 AND json_extract(p.data, '$.type') = 'tool'",
+                "FROM part p WHERE p.session_id = ?1 AND p.time_updated >= ?2 AND json_extract(p.data, '$.type') = 'tool'".to_string(),
             ),
-            Schema::V2 => (
+            Schema::V2 { rows } => (
                 "c.value",
                 "json_extract(c.value, '$.id')",
                 "json_extract(c.value, '$.name')",
                 "json_extract(c.value, '$.time.completed')",
-                "FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id = ?1 AND m.type = 'assistant'
-                 AND m.time_updated >= ?2 AND json_extract(c.value, '$.type') = 'tool'",
+                format!("FROM {} c WHERE c.updated >= ?2 AND c.type = 'tool'", v2_parts(rows)),
             ),
         };
         let sql = format!(
@@ -176,7 +201,7 @@ impl Schema {
                     json_extract(data, '$.modelID'), json_extract(data, '$.agent'), NULL
                  FROM message WHERE session_id = ?1 AND time_created >= ?2 ORDER BY time_created, id"
             }
-            Schema::V2 => {
+            Schema::V2 { .. } => {
                 "SELECT id, time_created, type = 'user', json_extract(data, '$.time.completed'),
                     json_extract(data, '$.finish'), COALESCE(json_type(data, '$.error') = 'object', 0),
                     json_extract(data, '$.model.id'), json_extract(data, '$.agent'), json_extract(data, '$.text')
@@ -211,17 +236,17 @@ impl Schema {
                     json_extract(data, '$.state.input.patchText'), json_extract(data, '$.files'),
                     json_extract(data, '$.state.time.start')
                  FROM part WHERE session_id = ?1 AND time_created >= ?2 ORDER BY time_created, id"
+                    .to_string()
             }
-            Schema::V2 => {
-                "SELECT m.id, json_extract(c.value, '$.type'),
-                    CASE WHEN json_extract(c.value, '$.type') = 'text' THEN json_extract(c.value, '$.text') END,
+            Schema::V2 { rows } => format!(
+                "SELECT c.msg, c.type, CASE WHEN c.type = 'text' THEN json_extract(c.value, '$.text') END,
                     0, json_extract(c.value, '$.name'), COALESCE(json_extract(c.value, '$.state.input.filePath'), json_extract(c.value, '$.state.input.path')),
                     json_extract(c.value, '$.state.input.patchText'), NULL, json_extract(c.value, '$.time.created')
-                 FROM session_message m, json_each(m.data, '$.content') c
-                 WHERE m.session_id = ?1 AND m.type = 'assistant' AND m.time_created >= ?2 ORDER BY m.seq, c.key"
-            }
+                 FROM {} c WHERE c.created >= ?2 ORDER BY c.seq, c.src, c.ord",
+                v2_parts(rows)
+            ),
         };
-        let mut st = c.prepare(sql)?;
+        let mut st = c.prepare(&sql)?;
         let rows = st.query_map(params![sid, from], |r| {
             Ok(PartRow {
                 msg: r.get(0)?,
@@ -554,6 +579,7 @@ mod tests {
         path: PathBuf,
         c: Connection,
         v2: bool,
+        rows: bool,
     }
 
     impl Db {
@@ -578,7 +604,18 @@ mod tests {
                 )
                 .unwrap();
             }
-            Db { path, c, v2 }
+            Db { path, c, v2, rows: false }
+        }
+
+        fn rows(name: &str) -> Db {
+            let mut db = Db::new(name, true);
+            db.c.execute_batch(
+                "CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, type TEXT, call_id TEXT,
+                    time_created INTEGER, time_updated INTEGER, data TEXT, PRIMARY KEY (message_id, ordinal));",
+            )
+            .unwrap();
+            db.rows = true;
+            db
         }
 
         fn session(&self, id: &str, parent: Option<&str>) {
@@ -660,7 +697,14 @@ mod tests {
         }
 
         fn add_part(&self, sid: &str, msg: &str, n: usize, at: i64, part: Value) {
-            if self.v2 {
+            if self.rows {
+                self.c
+                    .execute(
+                        "INSERT INTO session_part VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
+                        params![msg, sid, n as i64, part["type"].as_str(), part["id"].as_str(), at, part.to_string()],
+                    )
+                    .unwrap();
+            } else if self.v2 {
                 let raw: String = self
                     .c
                     .query_row("SELECT data FROM session_message WHERE id = ?1", [msg], |r| r.get(0))
@@ -705,8 +749,7 @@ mod tests {
         db.text("s1", "m2", 1, 1_000_600, "old reply");
     }
 
-    fn turn_flow(v2: bool, name: &str) {
-        let db = Db::new(name, v2);
+    fn turn_flow(db: Db) {
         history(&db);
         let mut src = OpenCode::new(db.path.clone());
         assert!(src.poll().is_empty());
@@ -717,7 +760,7 @@ mod tests {
         assert_eq!(names(&out), ["prompt"]);
         assert_eq!(out[0].cwd.as_deref(), Some(Path::new("/w/p")));
         assert!(matches!(&out[0].kind, Kind::Prompt { words: 7, pasted: false, model: None, .. }));
-        let version = if v2 { Some("2.2.5") } else { None };
+        let version = if db.v2 { Some("2.2.5") } else { None };
         assert!(matches!(&out[0].kind, Kind::Prompt { version: v, .. } if v.as_deref() == version));
         assert_eq!(out[0].ts, 2000.0);
 
@@ -757,12 +800,17 @@ mod tests {
 
     #[test]
     fn a_turn_becomes_prompt_start_done_legacy() {
-        turn_flow(false, "legacy-turn");
+        turn_flow(Db::new("legacy-turn", false));
     }
 
     #[test]
     fn a_turn_becomes_prompt_start_done_v2() {
-        turn_flow(true, "v2-turn");
+        turn_flow(Db::new("v2-turn", true));
+    }
+
+    #[test]
+    fn a_turn_becomes_prompt_start_done_part_rows() {
+        turn_flow(Db::rows("rows-turn"));
     }
 
     #[test]
@@ -832,8 +880,7 @@ mod tests {
             .collect()
     }
 
-    fn work_flow(v2: bool, name: &str) {
-        let db = Db::new(name, v2);
+    fn work_flow(db: Db) {
         history(&db);
         db.session("child", Some("s1"));
         let mut src = OpenCode::new(db.path.clone());
@@ -878,12 +925,73 @@ mod tests {
 
     #[test]
     fn edits_and_commits_from_tool_results_legacy() {
-        work_flow(false, "legacy-work");
+        work_flow(Db::new("legacy-work", false));
     }
 
     #[test]
     fn edits_and_commits_from_tool_results_v2() {
-        work_flow(true, "v2-work");
+        work_flow(Db::new("v2-work", true));
+    }
+
+    #[test]
+    fn edits_and_commits_from_tool_results_part_rows() {
+        work_flow(Db::rows("rows-work"));
+    }
+
+    // Rows opencode 2.4.1 wrote for one prompt (write, edit, write over a file, commit), shortened.
+    #[test]
+    fn a_real_opencode_2_4_session() {
+        let db = Db::rows("real-24");
+        history(&db);
+        let mut src = OpenCode::new(db.path.clone());
+        assert!(src.poll().is_empty());
+
+        let t = 1_795_548_259_000;
+        let user = json!({ "time": { "created": t + 223 }, "text": "add a small vector helper module with a dot product and a norm, then commit it", "files": [] });
+        db.msg("s1", "m3", t + 223, &user.to_string());
+        let assistant = |id: &str, at: i64, end: i64, finish: &str| {
+            let data = json!({
+                "time": { "created": at, "firstToken": at + 1008, "streamed": at + 1017, "completed": end },
+                "agent": "build", "model": { "id": "test-model", "providerID": "fake" }, "content": [],
+                "finish": finish, "rawFinish": finish.replace('-', "_"), "cost": 0
+            });
+            db.msg("s1", id, at, &data.to_string());
+        };
+        let tool = |msg: &str, n: usize, id: &str, at: i64, end: i64, name: &str, input: Value, reply: &str, metadata: Value| {
+            let state = json!({ "status": "completed", "input": input, "content": [{ "type": "text", "text": reply }], "metadata": metadata });
+            let part = json!({ "type": "tool", "id": id, "name": name, "executed": false, "state": state, "time": { "created": at, "ran": at + 4, "completed": end } });
+            db.add_part("s1", msg, n, end, part);
+        };
+        let plain = json!({ "truncated": false });
+
+        assistant("m4", t + 242, t + 1284, "tool-calls");
+        db.text("s1", "m4", 0, t + 1258, "I'll add the vector helpers first.");
+        let vec_py = "def dot(a, b):\n    return sum(x * y for x, y in zip(a, b))\n\n\ndef norm(a):\n    return dot(a, a)\n";
+        tool("m4", 1, "call_0", t + 1253, t + 1264, "write", json!({ "path": "vec.py", "content": vec_py }), "Created file successfully: vec.py", plain.clone());
+        assistant("m5", t + 1296, t + 2333, "tool-calls");
+        let edited = json!({ "files": [{ "file": "vec.py", "patch": "Index: vec.py", "status": "modified", "additions": 2, "deletions": 1 }], "truncated": false });
+        let edit = json!({ "path": "vec.py", "oldString": "    return dot(a, a)\n", "newString": "    import math\n    return math.sqrt(dot(a, a))\n" });
+        tool("m5", 0, "call_1", t + 2305, t + 2314, "edit", edit, "Edited vec.py (1 replacement)", edited);
+        assistant("m6", t + 2347, t + 3388, "tool-calls");
+        tool("m6", 0, "call_2", t + 3357, t + 3367, "write", json!({ "path": "README.md", "content": "# demo\n" }), "Wrote file successfully: README.md", plain);
+        assistant("m7", t + 3404, t + 4504, "tool-calls");
+        let ran = json!({ "status": "completed", "truncated": false, "exit": 0 });
+        let commit = "[main b782208] add vec helpers\n 2 files changed, 9 insertions(+)\n create mode 100644 vec.py\n";
+        tool("m7", 0, "call_3", t + 4416, t + 4498, "shell", json!({ "command": "git add -A && git commit -m 'add vec helpers'" }), commit, ran);
+        assistant("m8", t + 4516, t + 5535, "stop");
+        db.text("s1", "m8", 0, t + 5527, "Added vec.py with dot and norm, updated the README and committed it all.");
+
+        let out = src.poll();
+        assert_eq!(names(&out), ["prompt", "agent_start", "agent_edit", "agent_edit", "agent_commit", "reply_done"]);
+        assert_eq!(work(&out), ["s1 vec.py +6 -0", "s1 vec.py +2 -1", "s1 commit b782208 in /w/p"]);
+        assert!(matches!(&out[0].kind, Kind::Prompt { words: 16, pasted: false, .. }));
+        match &out[5].kind {
+            Kind::ReplyDone { reply_words, tools, files_changed, model, .. } => {
+                assert_eq!((*reply_words, *tools, *files_changed, model.as_deref()), (19, 4, 2, Some("test-model")));
+            }
+            k => panic!("{k:?}"),
+        }
+        assert!(src.poll().is_empty());
     }
 
     #[test]
