@@ -27,7 +27,7 @@ const BROWSERS: &[&str] = &[
 ];
 const AGENT_APPS: &[&str] = &[
     "antigravity", "com.anthropic.claude", "claude-desktop", "com.t3tools.t3code", "t3code", "chatgpt",
-    "com.anthropic.claudefordesktop", "com.openai.chat", "hermes",
+    "com.anthropic.claudefordesktop", "com.openai.chat", "hermes", "codex", "com.openai.codex", "t3-code",
 ];
 const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot", "pi", "hermes", "amp"];
 const EDITORS: &[&str] = &[
@@ -40,8 +40,9 @@ const EDITORS: &[&str] = &[
     "com.vscodium", "com.exafunction.windsurf", "com.google.android.studio",
 ];
 
+/// Lowercase, without `.exe`, spaces as dashes the way the name lists write them (`T3 Code (Beta).exe`).
 pub fn normalize(name: &str) -> String {
-    let lower = name.to_lowercase();
+    let lower = name.to_lowercase().replace(' ', "-");
     match lower.strip_suffix(".exe") {
         Some(stem) => stem.to_string(),
         None => lower,
@@ -478,6 +479,10 @@ mod tests {
         assert!(is_agent_app("claude-desktop", ""));
         assert!(is_agent_app("t3code", ""));
         assert!(is_agent_app("electron", "com.t3tools.t3code"));
+        assert!(is_agent_app(&normalize("T3 Code (Beta).exe"), ""));
+        assert!(is_agent_app(&normalize("T3 Code.exe"), ""));
+        assert!(is_agent_app(&normalize("Codex.exe"), ""));
+        assert!(is_agent_app("codex", "com.openai.codex"));
         assert!(!is_agent_app("claude", "kitty"));
         assert!(!is_agent_app("code", "code"));
     }
@@ -688,6 +693,8 @@ mod tests {
             (7, 0, "ChatGPT.exe"),
             (8, 0, "explorer.exe"),
             (9, 0, "godot_v4.3-stable_win64.exe"),
+            (10, 0, "Codex.exe"),
+            (11, 0, "T3 Code (Beta).exe"),
         ]);
         assert_eq!(class_of(&f, 1, "main.rs - proj - Visual Studio Code"), Class::Editor);
         assert_eq!(class_of(&f, 2, ""), Class::Editor);
@@ -699,6 +706,8 @@ mod tests {
         assert_eq!(class_of(&f, 5, "Some other tab"), Class::BrowserUnknown);
         assert_eq!(class_of(&f, 6, ""), Class::AgentApp);
         assert_eq!(class_of(&f, 7, ""), Class::AgentApp);
+        assert_eq!(class_of(&f, 10, ""), Class::AgentApp);
+        assert_eq!(class_of(&f, 11, ""), Class::AgentApp);
         assert_eq!(class_of(&f, 8, ""), Class::Other);
     }
 
