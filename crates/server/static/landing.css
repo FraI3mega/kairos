@@ -1103,6 +1103,10 @@ h1 {
     animation: none;
     width: 100%;
   }
+
+  .step.on .bar i {
+    animation: none;
+  }
 }
 
 .dial text {
