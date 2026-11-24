@@ -212,6 +212,7 @@ pub fn tool_name(id: &str) -> String {
         "qwen-code" => "Qwen Code",
         "pi" => "Pi",
         "hermes" => "Hermes",
+        "amp" => "Amp",
         other => return other.to_string(),
     }
     .to_string()

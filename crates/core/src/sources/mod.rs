@@ -1,3 +1,4 @@
+pub mod amp;
 pub mod antigravity;
 pub mod claude;
 mod claude_history;
@@ -57,6 +58,7 @@ pub fn all() -> Vec<Box<dyn Source>> {
         Box::new(qwen::Qwen::new(qwen::default_roots())),
         Box::new(pi::Pi::new(pi::default_roots())),
         Box::new(hermes::Hermes::new(hermes::default_roots())),
+        Box::new(amp::Amp::with_plugin(amp::default_dir(), amp::installed_cli())),
     ]
 }
 

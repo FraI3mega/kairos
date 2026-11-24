@@ -998,6 +998,7 @@ pub fn uninstall(args: &[String]) -> Result<()> {
         println!("Could not take Kairos off your PATH ({e:#}).");
     }
     crate::editors::remove_added();
+    kairos_core::sources::amp::remove_plugin();
     match crate::wakatime::release() {
         Ok(Some(line)) => println!("{line}"),
         Ok(None) => {}

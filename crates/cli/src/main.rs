@@ -98,6 +98,12 @@ fn print_text(r: &Report, days: usize) {
 fn run() -> Result<ExitCode> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     match raw.first().map(String::as_str) {
+        Some("amp-event") => {
+            let mut message = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 16 * 1024 * 1024), &mut message);
+            kairos_core::sources::amp::record(&message);
+            return Ok(ExitCode::SUCCESS);
+        }
         #[cfg(unix)]
         Some("hook") => {
             hook::run();

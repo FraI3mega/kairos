@@ -29,7 +29,7 @@ const AGENT_APPS: &[&str] = &[
     "antigravity", "com.anthropic.claude", "claude-desktop", "com.t3tools.t3code", "t3code", "chatgpt",
     "com.anthropic.claudefordesktop", "com.openai.chat", "hermes",
 ];
-const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot", "pi", "hermes"];
+const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot", "pi", "hermes", "amp"];
 const EDITORS: &[&str] = &[
     "code", "code-oss", "vscode", "codium", "vscodium", "cursor", "windsurf", "zed", "zeditor",
     "zed-editor", "dev.zed.zed", "nvim", "neovide", "vim", "gvim", "nano", "helix", "hx", "emacs",
@@ -72,10 +72,10 @@ fn is_agent_app(name: &str, wclass: &str) -> bool {
 
 pub fn is_agent_title(title: &str) -> bool {
     let lower = title.to_lowercase();
-    // Pi titles its terminal "π - <folder>"; "pi" itself is inside too many words to look for.
+    // Pi titles its terminal "π - <folder>"; "pi" and "amp" are inside too many words to look for.
     title.starts_with(|c: char| c == '✳' || ('\u{2800}'..='\u{28ff}').contains(&c))
         || title.starts_with("π - ")
-        || AGENT_CLIS.iter().filter(|n| **n != "pi").any(|n| lower.contains(n))
+        || AGENT_CLIS.iter().filter(|n| !matches!(**n, "pi" | "amp")).any(|n| lower.contains(n))
 }
 
 /// An editor by its executable or window class alone (a JetBrains IDE started through java needs its command line too).
@@ -180,6 +180,10 @@ fn is_agent_cli<P: Procs>(p: &P, pid: u32) -> bool {
         if name.starts_with("python") && args.iter().take(4).any(|a| a.contains("hermes_cli")) {
             return true;
         }
+    }
+    // Amp runs each plugin as its own child, in the folder the plugin is in.
+    if (name == "amp" || comm == "amp") && p.cmdline(pid).iter().take(3).any(|a| a.ends_with("plugin-runtime.ts")) {
+        return false;
     }
     if AGENT_CLIS.contains(&comm.as_str()) || AGENT_CLIS.contains(&name.as_str()) {
         return true;
@@ -516,7 +520,7 @@ mod tests {
 
     #[test]
     fn every_agent_cli_with_a_reader_counts() {
-        for cli in ["claude", "codex.exe", "opencode", "agy", "agy.exe", "gemini", "qwen", "kilo", "copilot", "pi", "pi.exe", "hermes.exe"] {
+        for cli in ["claude", "codex.exe", "opencode", "agy", "agy.exe", "gemini", "qwen", "kilo", "copilot", "pi", "pi.exe", "hermes.exe", "amp", "amp.exe"] {
             let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, cli)]);
             assert_eq!(class_of(&f, 10, ""), Class::AgentTerminal, "{cli}");
         }
@@ -548,9 +552,24 @@ mod tests {
     }
 
     #[test]
+    fn an_amp_plugin_under_the_cli_does_not_move_the_project() {
+        let dir = repo("amp");
+        let plugins = repo("amp-plugins");
+        let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, "amp"), (14, 13, "amp")])
+            .cwd(13, &dir)
+            .args(13, &["amp", "-m", "low"])
+            .cwd(14, &plugins)
+            .args(14, &["/home/a/.amp/bin/amp", "run", "/tmp/amp-plugin-runtime-2oheEi/plugin-runtime.ts", "/home/a/.config/amp/plugins/kairos.ts"]);
+        let Classified { class, project, .. } = classify_with(&f, 10, "", "");
+        assert_eq!(class, Class::AgentTerminal);
+        assert_eq!(project.unwrap().root, dir);
+    }
+
+    #[test]
     fn agent_titles() {
         assert!(is_agent_title("π - kairos") && is_agent_title("✳ Fix the parser") && is_agent_title("opencode"));
         assert!(!is_agent_title("pip install requests") && !is_agent_title("api-server: bash") && !is_agent_title("pi@raspberrypi: ~"));
+        assert!(!is_agent_title("xampp control panel") && !is_agent_title("vim example.py"));
     }
 
     #[test]
