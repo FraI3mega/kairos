@@ -17,7 +17,7 @@ use crate::git;
 use crate::project_ids::ProjectIds;
 use crate::{now, Msg};
 
-const IGNORED_DIRS: &[&str] = &[".git", "target", "node_modules"];
+const IGNORED_DIRS: &[&str] = &[".git", "target", "node_modules", ".venv", "venv", "site-packages", "__pycache__", ".next"];
 const QUIET: Duration = Duration::from_secs(2);
 const MAX_WAIT: Duration = Duration::from_secs(30);
 const MAX_DIRS: usize = 8192;
