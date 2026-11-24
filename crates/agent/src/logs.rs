@@ -165,6 +165,11 @@ fn event_of(f: Found, harness: &str, ex: &Exclusions, projects: &mut Lookups, wa
     Some(e)
 }
 
+/// The config folder a Claude Code turn's hooks run with, when it isn't the one kairosd's own wakatime-cli would read.
+fn claude_dir(harness: &str, kind: &Kind) -> Option<PathBuf> {
+    (harness == "claude-code").then(|| kind.session().and_then(sources::claude::other_config_dir)).flatten()
+}
+
 /// Also notes the folder each session runs in, and sets off the shadow when an agent finishes a turn, the moment an agent's
 /// WakaTime hook runs wakatime-cli.
 pub fn spawn(tx: Sender<Msg>, watch: Sender<Watch>, state_path: PathBuf, excluded: Arc<Excluded>, sessions: Arc<Sessions>, shadow: Arc<Shadow>) {
@@ -194,12 +199,12 @@ pub fn spawn(tx: Sender<Msg>, watch: Sender<Watch>, state_path: PathBuf, exclude
                     if let (Some(session), Some(cwd)) = (f.kind.session(), f.cwd.as_deref()) {
                         sessions.note(session, cwd);
                     }
-                    let turn_ended = matches!(f.kind, Kind::ReplyDone { .. });
+                    let turn_ended = matches!(f.kind, Kind::ReplyDone { .. }).then(|| claude_dir(s.harness(), &f.kind));
                     if let Some(e) = event_of(f, s.harness(), &ex, &mut projects, &watch) {
                         let _ = tx.send(Msg::Event(e));
                     }
-                    if turn_ended {
-                        shadow.nudge();
+                    if let Some(claude) = turn_ended {
+                        shadow.nudge(claude);
                     }
                 }
                 state.insert(s.name().to_string(), s.state());

@@ -39,6 +39,26 @@ pub fn default_roots() -> Vec<PathBuf> {
     roots
 }
 
+/// The Claude Code config folder `session`'s log is in, when it isn't the one a program started by kairosd looks in. Claude
+/// Code is pointed at another with `CLAUDE_CONFIG_DIR`, which its hooks run with and kairosd doesn't.
+pub fn other_config_dir(session: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let usual = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".claude"));
+    other_config_dir_in(&home, &usual, session)
+}
+
+fn other_config_dir_in(home: &Path, usual: &Path, session: &str) -> Option<PathBuf> {
+    if session.is_empty() || session.contains(['/', '\\']) {
+        return None;
+    }
+    let log = format!("{session}.jsonl");
+    let named = |e: &std::fs::DirEntry| e.file_name().to_str().is_some_and(|n| n == ".claude" || n.starts_with(".claude-"));
+    let holds = |dir: &PathBuf| std::fs::read_dir(dir.join("projects")).into_iter().flatten().flatten().any(|p| p.path().join(&log).is_file());
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(home).ok()?.flatten().filter(named).map(|e| e.path()).filter(|d| d != usual).collect();
+    dirs.sort();
+    dirs.into_iter().find(holds)
+}
+
 const SHOWN_CAP: usize = 2000;
 const COWORK: &str = "local-agent-mode-sessions";
 
@@ -428,6 +448,25 @@ mod tests {
     const RES: &str = r#"{"type":"user","timestamp":"2026-11-19T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}"#;
     const DONE: &str = r#"{"type":"assistant","timestamp":"2026-11-19T10:01:00Z","message":{"model":"claude-opus-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"Fixed it in a.rs."}]}}"#;
     const DUR: &str = r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-11-19T10:01:01Z"}"#;
+
+    #[test]
+    fn a_session_in_another_config_folder_names_that_folder() {
+        let home = std::env::temp_dir().join(format!("kairos-claude-dirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for (dir, session) in [(".claude", "main"), (".claude-work", "work"), (".claude-old", "old"), (".config", "other")] {
+            let project = home.join(dir).join("projects/-w-p");
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::write(project.join(format!("{session}.jsonl")), "").unwrap();
+        }
+        let usual = home.join(".claude");
+        assert_eq!(other_config_dir_in(&home, &usual, "work"), Some(home.join(".claude-work")));
+        assert_eq!(other_config_dir_in(&home, &usual, "main"), None, "wakatime-cli reads this one anyway");
+        assert_eq!(other_config_dir_in(&home, &usual, "other"), None, "not a Claude Code folder");
+        assert_eq!(other_config_dir_in(&home, &usual, "gone"), None);
+        assert_eq!(other_config_dir_in(&home, &usual, "../../.claude-work/projects/-w-p/work"), None);
+        assert_eq!(other_config_dir_in(&home, &home.join(".claude-work"), "main"), Some(usual), "kairosd itself was pointed at another");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
     #[test]
     fn a_turn_becomes_prompt_start_done() {

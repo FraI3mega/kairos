@@ -562,7 +562,7 @@ fn heartbeats(ctx: &Ctx, body: &[u8], req: &Req, via: Via) -> Resp {
     if via == Via::Shadow {
         return Resp::json(202, &serde_json::json!({ "responses": responses }));
     }
-    ctx.shadow.nudge();
+    ctx.shadow.nudge(None);
     let path = req.path.split('?').next().unwrap_or_default();
     (ctx.pass_on)(Entry {
         bulk: path.ends_with(".bulk"),

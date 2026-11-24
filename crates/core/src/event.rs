@@ -219,7 +219,7 @@ pub enum Kind {
     },
     /// How Hackatime is set up on this computer, written at start and when it changes. `relay`: Kairos holds the WakaTime config, so
     /// editor heartbeats come through it. `cli`: the version of the person's wakatime-cli, none when there is none. `shadow`:
-    /// kairosd can run it with AI sync on (it has the API port and there is a wakatime-cli). `ai_sync`: whether the person's own
+    /// kairosd can run it with AI sync on (it has the API port, there is a wakatime-cli and its last run worked). `ai_sync`: whether the person's own
     /// config leaves AI sync on, none without a config.
     WakatimeSetup {
         relay: bool,

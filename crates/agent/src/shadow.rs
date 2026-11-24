@@ -3,6 +3,7 @@
 //! Running it live is what makes this exact, since what it makes of a log depends on when it reads it. Its heartbeats come
 //! back to kairosd's API (`/shadow`), are recorded, and are never sent anywhere.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -35,9 +36,12 @@ pub fn url() -> String {
     format!("http://127.0.0.1:{API_PORT}/shadow/v1")
 }
 
+/// A run to make: with `CLAUDE_CONFIG_DIR` set to this folder, or as kairosd itself runs.
+type Run = Option<PathBuf>;
+
 pub struct Shadow {
     key: String,
-    pending: Mutex<bool>,
+    pending: Mutex<BTreeSet<Run>>,
     wake: Condvar,
 }
 
@@ -47,7 +51,7 @@ impl Shadow {
     }
 
     pub fn with_key(key: String) -> Shadow {
-        Shadow { key, pending: Mutex::new(false), wake: Condvar::new() }
+        Shadow { key, pending: Mutex::new(BTreeSet::new()), wake: Condvar::new() }
     }
 
     /// The key the shadow's wakatime-cli sends with, new each time kairosd starts.
@@ -55,35 +59,33 @@ impl Shadow {
         &self.key
     }
 
-    pub fn nudge(&self) {
+    /// `claude`: the config folder of the Claude Code that just finished a turn, when wakatime-cli has to be told of it.
+    pub fn nudge(&self, claude: Option<PathBuf>) {
         if let Ok(mut p) = self.pending.lock() {
-            *p = true;
+            p.insert(claude);
             self.wake.notify_one();
         }
     }
 
-    /// Waits up to `max` for a nudge, then for more of them to settle. True if there was one.
-    fn wait(&self, max: Duration) -> bool {
+    /// Waits up to `max` for a nudge, then for more of them to settle. The runs they ask for, none if there was no nudge.
+    fn wait(&self, max: Duration) -> BTreeSet<Run> {
         let Ok(p) = self.pending.lock() else {
-            return false;
+            return BTreeSet::new();
         };
-        let Ok((p, _)) = self.wake.wait_timeout_while(p, max, |p| !*p) else {
-            return false;
+        let Ok((p, _)) = self.wake.wait_timeout_while(p, max, |p| p.is_empty()) else {
+            return BTreeSet::new();
         };
-        if !*p {
-            return false;
+        if p.is_empty() {
+            return BTreeSet::new();
         }
         drop(p);
         thread::sleep(SETTLE);
-        if let Ok(mut p) = self.pending.lock() {
-            *p = false;
-        }
-        true
+        self.pending.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default()
     }
 
     #[cfg(test)]
     pub fn nudged(&self) -> bool {
-        self.pending.lock().is_ok_and(|p| *p)
+        self.pending.lock().is_ok_and(|p| !p.is_empty())
     }
 }
 
@@ -110,21 +112,22 @@ pub fn spawn(shadow: Arc<Shadow>, data: PathBuf, bound: Arc<AtomicBool>, tx: Sen
             let seen = Kind::WakatimeSetup {
                 relay: bound_now && relaying(&data),
                 cli: cli.as_deref().and_then(|c| versions.of(c)),
-                shadow: bound_now && cli.is_some(),
+                shadow: bound_now && cli.is_some() && failed.is_none(),
                 ai_sync: wakatime::config_path().and_then(|p| wakatime::ai_sync(&p)),
             };
             if setup.as_ref().is_none_or(|(s, at): &(Kind, Instant)| *s != seen || at.elapsed() >= SETUP_AGAIN) {
                 let _ = tx.send(Msg::Event(Event::new(now(), None, seen.clone())));
                 setup = Some((seen, Instant::now()));
             }
-            if !shadow.wait(SETUP_EVERY) || !bound.load(Ordering::Relaxed) {
+            let runs = shadow.wait(SETUP_EVERY);
+            if runs.is_empty() || !bound.load(Ordering::Relaxed) {
                 continue;
             }
             let Some(cli) = wakatime_cli::find() else {
                 continue;
             };
             let started = Instant::now();
-            let result = run(&dir, &cli, shadow.key());
+            let result = runs.iter().try_for_each(|claude| run(&dir, &cli, shadow.key(), claude.as_deref()));
             let error = result.err().map(|e| format!("{e:#}"));
             if error != failed {
                 match &error {
@@ -150,12 +153,12 @@ fn relaying(data: &Path) -> bool {
     s.config == config && matches!(wakatime::points(&config), Ok(Points::Kairos))
 }
 
-fn run(dir: &Path, cli: &Path, key: &str) -> Result<()> {
+fn run(dir: &Path, cli: &Path, key: &str, claude: Option<&Path>) -> Result<()> {
     wakatime::prepare_shadow(dir, wakatime::config_path().as_deref(), &url(), key, chrono::Utc::now())?;
-    execute(command(cli, dir), cli)
+    execute(command(cli, dir, claude), cli)
 }
 
-fn command(cli: &Path, dir: &Path) -> Command {
+fn command(cli: &Path, dir: &Path, claude: Option<&Path>) -> Command {
     let tmp = dir.join("tmp");
     let mut cmd = Command::new(cli);
     cmd.arg("--sync-ai-activity")
@@ -164,6 +167,9 @@ fn command(cli: &Path, dir: &Path) -> Command {
         .env("TMP", &tmp)
         .env("TEMP", &tmp)
         .current_dir(dir);
+    if let Some(claude) = claude {
+        cmd.env("CLAUDE_CONFIG_DIR", claude);
+    }
     cmd
 }
 
@@ -231,4 +237,27 @@ fn version(cli: &Path) -> Option<String> {
     child.stdout.take()?.read_to_string(&mut text).ok()?;
     let v: String = text.split_whitespace().next()?.chars().filter(|c| !c.is_control()).take(40).collect();
     (!v.is_empty()).then_some(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_is_told_of_a_claude_folder_wakatime_cli_wouldnt_read() {
+        let var = |cmd: &Command| cmd.get_envs().find(|(k, _)| *k == "CLAUDE_CONFIG_DIR").map(|(_, v)| v.map(PathBuf::from));
+        let (cli, dir) = (Path::new("/w/wakatime-cli"), Path::new("/w/hackatime-ai"));
+        assert_eq!(var(&command(cli, dir, None)), None, "kairosd's own environment as it is");
+        assert_eq!(var(&command(cli, dir, Some(Path::new("/home/u/.claude-work")))), Some(Some("/home/u/.claude-work".into())));
+    }
+
+    #[test]
+    fn nudges_ask_for_one_run_per_claude_folder() {
+        let shadow = Shadow::with_key("k".into());
+        let work = Some(PathBuf::from("/home/u/.claude-work"));
+        for claude in [None, work.clone(), None, work.clone()] {
+            shadow.nudge(claude);
+        }
+        assert_eq!(*shadow.pending.lock().unwrap(), BTreeSet::from([None, work]));
+    }
 }
