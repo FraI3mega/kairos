@@ -1,10 +1,13 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use kairos_core::event::Class;
 use kairos_core::exclude::Exclusions;
 use kairos_core::project::{own_folder, project_of, Project};
+use kairos_core::sources::t3code;
 
 const TERMINALS: &[&str] = &[
     "kitty", "alacritty", "foot", "footclient", "wezterm", "wezterm-gui", "gnome-terminal",
@@ -65,6 +68,24 @@ pub fn is_console_host(name: &str) -> bool {
 
 pub fn is_browser(name: &str, wclass: &str) -> bool {
     is_one_of(BROWSERS, name) || is_one_of(BROWSERS, wclass)
+}
+
+const T3_CODE: &[&str] = &["com.t3tools.t3code", "t3code", "t3-code"];
+const T3_PROJECTS_FOR: Duration = Duration::from_secs(20);
+
+// T3 Code shows every project in one window and starts no process in a project until a thread runs. Its title names the
+// open thread's project and its own store says which folder that is.
+fn t3_projects() -> Vec<(String, PathBuf)> {
+    static READ: Mutex<Option<(Instant, Vec<(String, PathBuf)>)>> = Mutex::new(None);
+    let mut read = READ.lock().unwrap_or_else(|e| e.into_inner());
+    match &*read {
+        Some((at, projects)) if at.elapsed() < T3_PROJECTS_FOR => projects.clone(),
+        _ => {
+            let projects = t3code::projects(&t3code::default_dbs());
+            *read = Some((Instant::now(), projects.clone()));
+            projects
+        }
+    }
 }
 
 fn is_agent_app(name: &str, wclass: &str) -> bool {
@@ -386,6 +407,11 @@ fn classify_parts<P: Procs>(p: &P, pid: u32, name: &str, wclass: &str, title: &s
         return (Class::BrowserUnknown, None);
     }
     if is_agent_app(name, &wclass) || name == "claude" {
+        if is_one_of(T3_CODE, name) || is_one_of(T3_CODE, &wclass) {
+            if let Some(folder) = t3code::titled_folder(title, &t3_projects()) {
+                return (Class::AgentApp, g.project(folder));
+            }
+        }
         return (Class::AgentApp, titled_project(p, pid, title, g).or_else(|| editor_project(p, pid, g)));
     }
     if is_editor(p, name, &wclass, pid) {
