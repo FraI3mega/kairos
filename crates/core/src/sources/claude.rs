@@ -15,9 +15,14 @@ pub fn default_roots() -> Vec<PathBuf> {
         roots.push(PathBuf::from(d).join("projects"));
     }
     if let Some(home) = dirs::home_dir() {
+        // Listed before it exists: Claude Code may get installed while kairosd is running.
+        let main = home.join(".claude").join("projects");
+        if !roots.contains(&main) {
+            roots.push(main);
+        }
         for e in std::fs::read_dir(&home).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name == ".claude" || name.starts_with(".claude-") {
+            if name.starts_with(".claude-") {
                 let p = e.path().join("projects");
                 if p.is_dir() && !roots.contains(&p) {
                     roots.push(p);

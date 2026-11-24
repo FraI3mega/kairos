@@ -274,6 +274,28 @@ struct Rec {
     authored: i64,
 }
 
+// kairosd keeps the PATH it started with, so a Git for Windows installed since then is looked up where its installer puts it.
+#[cfg(windows)]
+fn add_installed_git_to_path() -> bool {
+    for (var, sub) in [("ProgramFiles", "Git\\cmd"), ("ProgramW6432", "Git\\cmd"), ("LOCALAPPDATA", "Programs\\Git\\cmd")] {
+        let Some(base) = std::env::var_os(var) else { continue };
+        let dir = PathBuf::from(base).join(sub);
+        if dir.join("git.exe").is_file() {
+            let mut path = std::env::var_os("PATH").unwrap_or_default();
+            path.push(";");
+            path.push(&dir);
+            std::env::set_var("PATH", path);
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(windows))]
+fn add_installed_git_to_path() -> bool {
+    false
+}
+
 #[derive(Clone)]
 struct Git {
     program: OsString,
@@ -360,7 +382,8 @@ impl Git {
     }
 
     fn available(&self) -> bool {
-        self.run(None, &["--version"], Buf::default()).is_ok()
+        let runs = || self.run(None, &["--version"], Buf::default()).is_ok();
+        runs() || (add_installed_git_to_path() && runs())
     }
 
     fn text(&self, root: &Path, args: &[&str]) -> Result<String, Fail> {
@@ -552,6 +575,7 @@ struct Engine {
     repos: HashMap<PathBuf, Repo>,
     rejected: HashMap<PathBuf, Instant>,
     avail: Avail,
+    git_retry: Option<Instant>,
     next_sweep: Instant,
     unwatch: Vec<PathBuf>,
     warned_cap: bool,
@@ -572,6 +596,7 @@ impl Engine {
             repos: HashMap::new(),
             rejected: HashMap::new(),
             avail: Avail::Unknown,
+            git_retry: None,
             next_sweep: Instant::now() + SWEEP,
             unwatch: Vec::new(),
             warned_cap: false,
@@ -601,6 +626,10 @@ impl Engine {
             repo.id = id;
             return Vec::new();
         }
+        // Git may get installed while kairosd runs. Not on macOS, where each try can bring the install dialog back.
+        if self.avail == Avail::No && !cfg!(target_os = "macos") && self.git_retry.is_some_and(|t| now >= t) {
+            self.avail = Avail::Unknown;
+        }
         if self.avail == Avail::No || self.rejected.get(&root).is_some_and(|t| now < *t) {
             return Vec::new();
         }
@@ -621,7 +650,10 @@ impl Engine {
             if self.git.available() {
                 self.avail = Avail::Yes;
             } else {
-                diag!("kairosd: git not found, commit and diff evidence is off");
+                if self.git_retry.is_none() {
+                    diag!("kairosd: git not found, commit and diff evidence is off");
+                }
+                self.git_retry = Some(now + RETRY);
                 self.avail = Avail::No;
                 return Vec::new();
             }
@@ -1624,6 +1656,23 @@ mod tests {
         assert!(e.avail == Avail::No);
         assert!(e.tick(t + Duration::from_secs(5), now()).is_empty());
         assert!(e.repos.is_empty());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn git_installed_later_is_found_on_a_retry() {
+        let f = fixture("lategit");
+        let root = repo(&f.dir, "r");
+        commit(&root, "a.txt", "1\n");
+        let mut e = Engine::new(Git { program: "/nonexistent/kairos-git".into() }, f.dir.join("state.json"), Arc::new(Excluded::new(f.dir.clone())));
+        let t = Instant::now();
+        e.register(root.clone(), "o/r".into(), t, now());
+        e.git = Git::default();
+        e.register(root.clone(), "o/r".into(), t + RETRY - Duration::from_secs(1), now());
+        assert!(e.avail == Avail::No);
+        e.register(root.clone(), "o/r".into(), t + RETRY, now());
+        assert!(e.avail == Avail::Yes);
+        assert!(e.repos.contains_key(&root));
     }
 
     #[test]
