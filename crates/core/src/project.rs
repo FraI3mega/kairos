@@ -29,6 +29,16 @@ pub fn project_of(path: &Path) -> Option<Project> {
     Some(Project { id, root: root.to_path_buf() })
 }
 
+/// Tools that install as a git clone (nvm in ~/.nvm, Homebrew in /opt/homebrew, pyenv, asdf) are projects to git, and
+/// every program they install sits inside one. A project the person works on is under home with no hidden folder on the way.
+pub fn own_folder(root: &Path) -> bool {
+    dirs::home_dir().is_some_and(|home| in_home(root, &home) || home.canonicalize().is_ok_and(|real| in_home(root, &real)))
+}
+
+fn in_home(root: &Path, home: &Path) -> bool {
+    root.strip_prefix(home).is_ok_and(|rel| !rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')))
+}
+
 pub fn git_config(root: &Path) -> Option<PathBuf> {
     let dot = root.join(".git");
     if dot.is_dir() {
@@ -100,5 +110,21 @@ pub fn normalize_remote(url: &str) -> Option<String> {
         [] => None,
         [one] => Some(one.to_string()),
         [.., owner, repo] => Some(format!("{owner}/{repo}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_installs_are_not_own_folders() {
+        let home = Path::new("/home/ada");
+        assert!(in_home(Path::new("/home/ada/Projects/game"), home));
+        assert!(in_home(Path::new("/home/ada/game"), home));
+        assert!(!in_home(Path::new("/home/ada/.nvm"), home));
+        assert!(!in_home(Path::new("/home/ada/.local/share/tool"), home));
+        assert!(!in_home(Path::new("/opt/homebrew"), home));
+        assert!(!in_home(Path::new("/home/adam/game"), home));
     }
 }

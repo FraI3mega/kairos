@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use kairos_core::event::Class;
 use kairos_core::exclude::Exclusions;
-use kairos_core::project::{project_of, Project};
+use kairos_core::project::{own_folder, project_of, Project};
 
 const TERMINALS: &[&str] = &[
     "kitty", "alacritty", "foot", "footclient", "wezterm", "wezterm-gui", "gnome-terminal",
@@ -309,7 +309,7 @@ fn title_names(title: &str) -> Vec<String> {
 fn process_project<P: Procs>(p: &P, pid: u32, g: &Guard) -> Option<Project> {
     p.cwd(pid)
         .and_then(|c| g.project(&c))
-        .or_else(|| p.exe(pid).and_then(|e| e.parent().and_then(|d| g.project(d))))
+        .or_else(|| p.exe(pid).and_then(|e| e.parent().and_then(|d| g.project(d))).filter(|proj| own_folder(&proj.root)))
 }
 
 // A console window is drawn by conhost, a child of the console's first client, and Windows names
@@ -399,11 +399,12 @@ mod tests {
     struct Fake {
         tree: Tree,
         procs: HashMap<u32, (&'static str, Option<PathBuf>, Vec<String>)>,
+        exes: HashMap<u32, PathBuf>,
     }
 
     impl Fake {
         fn new(list: &[(u32, u32, &'static str)]) -> Fake {
-            let mut f = Fake { tree: Tree::default(), procs: HashMap::new() };
+            let mut f = Fake { tree: Tree::default(), procs: HashMap::new(), exes: HashMap::new() };
             for &(pid, ppid, name) in list {
                 f.tree.insert(pid, ppid);
                 f.procs.insert(pid, (name, None, Vec::new()));
@@ -413,6 +414,11 @@ mod tests {
 
         fn cwd(mut self, pid: u32, dir: &Path) -> Fake {
             self.procs.get_mut(&pid).unwrap().1 = Some(dir.to_path_buf());
+            self
+        }
+
+        fn exe(mut self, pid: u32, file: &Path) -> Fake {
+            self.exes.insert(pid, file.to_path_buf());
             self
         }
 
@@ -433,8 +439,8 @@ mod tests {
             self.procs.get(&pid).map(|p| normalize(p.0)).unwrap_or_default()
         }
 
-        fn exe(&self, _: u32) -> Option<PathBuf> {
-            None
+        fn exe(&self, pid: u32) -> Option<PathBuf> {
+            self.exes.get(&pid).cloned()
         }
 
         fn cwd(&self, pid: u32) -> Option<PathBuf> {
@@ -723,6 +729,28 @@ mod tests {
         let dir = repo("testing");
         let f = Fake::new(&[(1, 0, "game.exe")]).cwd(1, &dir);
         assert_eq!(class_of(&f, 1, ""), Class::Testing);
+    }
+
+    #[test]
+    fn a_program_from_a_tool_that_installs_as_a_git_clone_is_not_testing() {
+        let base = std::env::temp_dir().join(format!("kairos-classify-tool-{}", std::process::id()));
+        let nvm = base.join(".nvm");
+        std::fs::create_dir_all(nvm.join(".git")).unwrap();
+        std::fs::create_dir_all(nvm.join("versions/bin")).unwrap();
+        let node = nvm.join("versions/bin/node");
+
+        let f = Fake::new(&[(1, 0, "node")]).cwd(1, &base).exe(1, &node);
+        let c = classify_with(&f, 1, "", "");
+        assert_eq!((c.class, c.project), (Class::Other, None));
+
+        let term = Fake::new(&[(10, 1, "kitty"), (11, 10, "bash"), (12, 11, "node")]).cwd(11, &base).cwd(12, &base).exe(12, &node);
+        let c = classify_with(&term, 10, "", "");
+        assert_eq!((c.class, c.project), (Class::Other, None));
+
+        let dir = repo("tool-own");
+        let own = Fake::new(&[(1, 0, "node")]).cwd(1, &dir).exe(1, &node);
+        assert_eq!(class_of(&own, 1, ""), Class::Testing, "running in a project still counts");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     fn siblings(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
