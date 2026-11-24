@@ -557,7 +557,7 @@ mod tests {
         out.iter()
             .filter_map(|f| match &f.kind {
                 Kind::AgentEdit { path, added, removed, session } => Some(format!("{session} {path} +{added} -{removed}")),
-                Kind::AgentCommit { sha, .. } => Some(format!("commit {} in {}", sha.as_deref().unwrap_or("-"), f.cwd.as_deref().map_or("-".into(), |c| c.display().to_string()))),
+                Kind::AgentCommit { sha, .. } => Some(format!("commit {} in {}", sha.as_deref().unwrap_or("-"), f.cwd.as_deref().map_or("-".into(), |c| c.display().to_string().replace('\\', "/")))),
                 _ => None,
             })
             .collect()

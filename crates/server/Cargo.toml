@@ -34,5 +34,6 @@ ring = "=0.17.14"
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+kairos-core = { path = "../core", features = ["client"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

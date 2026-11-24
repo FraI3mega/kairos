@@ -2,6 +2,8 @@ mod common;
 
 use axum::http::{header, Method, StatusCode};
 use common::{day_seconds, query_of, upload, user_id, Chain, TestApp};
+use kairos_core::account;
+use kairos_core::pairing::Pairing;
 use kairos_core::pkce;
 use kairos_core::event::{Class, Kind};
 use serde_json::json;
@@ -509,5 +511,36 @@ async fn a_device_reaches_far_behind_what_it_already_sent_only_a_few_times() {
     }
     wide.push(9.0, Some("acme/app"), focus());
     assert_eq!(upload(&app, &desktop, wide.take()).await.status, StatusCode::TOO_MANY_REQUESTS, "a first upload that spans decades counted too");
+    app.finish().await;
+}
+
+/// The real client signing in twice before it uploaded anything, so the server can't tell it's the same computer: the
+/// second sign-in gives the first token up, and the account keeps one device connected instead of two.
+#[tokio::test(flavor = "multi_thread")]
+async fn signing_in_twice_before_any_upload_leaves_one_device_connected() {
+    let app = TestApp::new().await;
+    let mut b = app.browser();
+    b.sign_in("Ada Lovelace", "ada@example.com").await;
+    let ada = user_id(&app, "ada").await;
+    let dir = std::env::temp_dir().join(format!("kairos-relogin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut tokens = Vec::new();
+    for _ in 0..2 {
+        let url = app.url.clone();
+        let pairing = tokio::task::spawn_blocking(move || Pairing::begin(&url).unwrap()).await.unwrap();
+        let code = pairing.user_code().to_string();
+        let page = b.get(&format!("/device?code={code}")).await;
+        assert!(b.post("/device/approve", &[("code", &code), ("csrf", &page.csrf())]).await.body.contains("Computer connected"));
+        let d = dir.clone();
+        tokens.push(tokio::task::spawn_blocking(move || pairing.wait(&d).unwrap().token).await.unwrap());
+    }
+
+    let connected = "SELECT count(*) FROM devices WHERE user_id = $1 AND revoked_at IS NULL";
+    assert_eq!(app.count(connected, ada).await, 1);
+    assert_eq!(account::load(&dir).map(|a| a.token).as_ref(), Some(&tokens[1]));
+    assert_eq!(me(&app, &tokens[1]).await.status, StatusCode::OK);
+    assert_eq!(me(&app, &tokens[0]).await.status, StatusCode::UNAUTHORIZED);
+    let _ = std::fs::remove_dir_all(&dir);
     app.finish().await;
 }

@@ -157,8 +157,10 @@ impl Pairing {
 /// when the account has one that ends on the last event the computer uploaded, and then uploads go on from there. A new
 /// device gets the whole log when none of it was uploaded, and only what comes from now on when it was: those events
 /// are on another device already, maybe another account's. The cursor is written first, so kairosd never uploads for
-/// the new account from the old place.
+/// the new account from the old place. The token this computer had before is given up only once the new one is saved,
+/// so signing in twice doesn't leave a second device connected, and a sign-in that fails leaves the old one working.
 fn keep(dir: &Path, acct: &Account, resumed: bool) -> Result<()> {
+    let old = account::load(dir).filter(|old| old.token != acct.token);
     if !resumed {
         match State::load(dir).last_hash {
             Some(_) => upload::end(dir).save(dir).context("saving upload.json")?,
@@ -167,7 +169,11 @@ fn keep(dir: &Path, acct: &Account, resumed: bool) -> Result<()> {
             }
         }
     }
-    account::save(dir, acct)
+    account::save(dir, acct)?;
+    if let Some(old) = old {
+        give_up(&old);
+    }
+    Ok(())
 }
 
 /// `kairos logout`: tells the server this computer gave its token up, so its device stops counting as connected.
@@ -251,7 +257,7 @@ mod tests {
         fake_server_seen(replies).0
     }
 
-    /// Also hands over the body of each request it answered.
+    /// Also hands over each request it answered, head and body.
     fn fake_server_seen(replies: Vec<(u16, String)>) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -277,7 +283,7 @@ mod tests {
                     .unwrap_or(0);
                 let mut rest = vec![0u8; len.saturating_sub(buf.len() - head_end)];
                 let _ = sock.read_exact(&mut rest);
-                let _ = tx.send(String::from_utf8_lossy(&[&buf[head_end..], &rest[..]].concat()).into_owned());
+                let _ = tx.send(String::from_utf8_lossy(&[&buf[..], &rest[..]].concat()).into_owned());
                 let reply = format!(
                     "HTTP/1.1 {code} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -415,6 +421,34 @@ mod tests {
         assert!(c.finish("kg_1", &dir).unwrap_err().to_string().contains("already used"));
         assert!(c.finish("kg_1", &dir).unwrap_err().to_string().contains("sent no token"));
         assert_eq!(account::load(&dir), Some(acct), "a failed sign-in leaves the saved one alone");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn signing_in_again_gives_up_the_old_token_after_the_new_one_is_saved() {
+        let refused = json!({ "error": "this sign-in expired or was already used, run kairos login again" }).to_string();
+        let (server, seen) = fake_server_seen(vec![
+            (400, refused),
+            (200, json!({ "token": "kd_2", "username": "bea" }).to_string()),
+            (200, json!({ "ok": true }).to_string()),
+        ]);
+        let dir = temp("again");
+        fs::create_dir_all(&dir).unwrap();
+        let old = Account { server: server.clone(), token: "kd_1".into(), username: "bea".into() };
+        account::save(&dir, &old).unwrap();
+        let client = Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        let c = Connect::with(client, &server).unwrap();
+
+        assert!(c.finish("kg_1", &dir).is_err());
+        assert_eq!(account::load(&dir), Some(old));
+        assert_eq!(seen.try_iter().count(), 1, "a failed sign-in gives nothing up");
+
+        let acct = c.finish("kg_2", &dir).unwrap();
+        assert_eq!(account::load(&dir), Some(acct));
+        let requests: Vec<String> = seen.try_iter().collect();
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        assert!(requests[0].starts_with("POST /api/v1/device/exchange"), "{requests:?}");
+        assert!(requests[1].starts_with("POST /api/v1/device/logout") && requests[1].contains("Bearer kd_1"), "{requests:?}");
         let _ = fs::remove_dir_all(&dir);
     }
 
