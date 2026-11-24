@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::claude_history::History;
+use super::t3code::T3Code;
 use super::{string_words, work, words, Found, Source, Tail};
 use crate::event::{Ask, Kind};
 use crate::parse::{timestamp, user_line, UserLine};
@@ -98,6 +99,7 @@ struct Turn {
     commands: HashMap<String, String>,
     restoring: HashMap<String, ()>,
     asks: HashMap<String, (f64, Option<Ask>, usize)>,
+    t3_prompt: Option<f64>,
 }
 
 impl Turn {
@@ -125,12 +127,28 @@ pub struct Claude {
     tail: Tail,
     turns: HashMap<PathBuf, Turn>,
     history: History,
+    t3: T3Code,
 }
 
 impl Claude {
     pub fn new(roots: Vec<PathBuf>) -> Claude {
-        Claude { history: History::new(&roots), tail: Tail::new(roots, "jsonl", skip), turns: HashMap::new() }
+        Claude::with_t3(roots, T3Code::new(super::t3code::default_dbs()))
     }
+
+    fn with_t3(roots: Vec<PathBuf>, t3: T3Code) -> Claude {
+        Claude { history: History::new(&roots), tail: Tail::new(roots, "jsonl", skip), turns: HashMap::new(), t3 }
+    }
+}
+
+// A prompt T3 Code handed to Claude Code that its own store says nobody typed in the app. What the store does not show
+// stays a prompt.
+fn sent_by_t3(turn: &mut Turn, e: &Value, ts: f64, t3: &mut T3Code) -> bool {
+    if e.get("entrypoint").and_then(Value::as_str) != Some("t3-code") {
+        return false;
+    }
+    let session = e.get("sessionId").and_then(Value::as_str).unwrap_or_default();
+    let before = turn.t3_prompt.replace(ts);
+    t3.typed(session, before, ts) == Some(false)
 }
 
 // Edit tools (and shell commands, as `bashEditDiff`) put the patch in `toolUseResult`; a commit is a Bash call whose own output printed the sha.
@@ -256,7 +274,7 @@ fn result_text(block: &Value) -> Option<String> {
     }
 }
 
-fn feed(turn: &mut Turn, e: &Value, out: &mut Vec<Found>) {
+fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
     let sidechain = turn.sub || e.get("isSidechain").and_then(Value::as_bool) == Some(true);
     let Some(ts) = timestamp(e) else { return };
     let cwd = match e.get("cwd").and_then(Value::as_str) {
@@ -278,6 +296,9 @@ fn feed(turn: &mut Turn, e: &Value, out: &mut Vec<Found>) {
             if e.get("entrypoint").and_then(Value::as_str).is_some_and(|p| p.starts_with("sdk")) {
                 return;
             }
+            if sent_by_t3(turn, e, ts, t3) {
+                return;
+            }
             let session = e.get("sessionId").and_then(Value::as_str).unwrap_or_default().to_string();
             let (words, pasted) = prompt_stats(&text);
             let shape = Some(prompt_shape(&text));
@@ -288,6 +309,7 @@ fn feed(turn: &mut Turn, e: &Value, out: &mut Vec<Found>) {
                 commands: std::mem::take(&mut turn.commands),
                 restoring: std::mem::take(&mut turn.restoring),
                 asks: std::mem::take(&mut turn.asks),
+                t3_prompt: turn.t3_prompt,
                 armed: true,
                 open: true,
                 last_ts: ts,
@@ -307,7 +329,7 @@ fn feed(turn: &mut Turn, e: &Value, out: &mut Vec<Found>) {
         UserLine::Other => {}
     }
     if ty == "attachment" {
-        if let Some(text) = queued_prompt(e) {
+        if let Some(text) = queued_prompt(e).filter(|_| !sent_by_t3(turn, e, ts, t3)) {
             let session = e.get("sessionId").and_then(Value::as_str).unwrap_or_default().to_string();
             let (words, pasted) = prompt_stats(text);
             let shape = Some(prompt_shape(text));
@@ -404,13 +426,13 @@ impl Source for Claude {
 
     fn poll(&mut self) -> Vec<Found> {
         let mut out = Vec::new();
-        let turns = &mut self.turns;
+        let (turns, t3) = (&mut self.turns, &mut self.t3);
         self.tail.poll(|path, line| {
             if let Ok(e) = serde_json::from_str::<Value>(line) {
                 let turn = turns
                     .entry(path.to_path_buf())
                     .or_insert_with(|| Turn { folder: cowork_folder(path), sub: subagent(path), ..Turn::default() });
-                feed(turn, &e, &mut out);
+                feed(turn, &e, t3, &mut out);
             }
         });
         self.turns.retain(|p, _| p.exists());
@@ -438,7 +460,7 @@ mod tests {
         let mut t = Turn::default();
         let mut out = Vec::new();
         for l in lines {
-            feed(&mut t, &serde_json::from_str(l).unwrap(), &mut out);
+            feed(&mut t, &serde_json::from_str(l).unwrap(), &mut T3Code::new(Vec::new()), &mut out);
         }
         out
     }
@@ -570,6 +592,31 @@ mod tests {
         assert!(run(&[&compact, TOOL, RES, DONE]).is_empty());
         let side = P.replace(r#""type":"user","#, r#""type":"user","isSidechain":true,"#);
         assert!(run(&[&side]).is_empty());
+    }
+
+    #[test]
+    fn t3_code_prompts_count_only_when_its_store_shows_them_typed_in_the_app() {
+        let at = |l: &str, s: u32| l.replace("2026-11-19T10:00", "2026-11-07T05:00").replace(r#""type":"#, r#""entrypoint":"t3-code","type":"#).replace(":00Z", &format!(":{s:02}Z"));
+        let q = r#"{"type":"attachment","sessionId":"s1","timestamp":"2026-11-19T10:00:00Z","attachment":{"type":"queued_command","prompt":"also update the docs please","commandMode":"prompt","origin":{"kind":"human"}}}"#;
+        let lines = [at(P, 11), at(&q, 31)];
+        for (first, second, kinds) in [("user", "user", vec!["prompt", "prompt"]), ("agent", "user", vec!["prompt"]), ("user", "agent", vec!["prompt"]), ("agent", "agent", vec![])] {
+            let mut s = super::super::t3code::tests::store("claude");
+            s.thread("p1", "s1");
+            s.message("p1", 10, first, if first == "user" { "web" } else { "mcp" }, "");
+            s.message("p1", 30, second, if second == "user" { "web" } else { "mcp" }, "");
+            let mut t3 = T3Code::new(vec![s.path.clone()]);
+            let (mut t, mut out) = (Turn::default(), Vec::new());
+            for l in &lines {
+                feed(&mut t, &serde_json::from_str(l).unwrap(), &mut t3, &mut out);
+            }
+            assert_eq!(out.iter().map(|f| f.kind.name()).collect::<Vec<_>>(), kinds, "{first} {second}");
+        }
+        // A session T3 Code's store does not know stays as it was.
+        let s = super::super::t3code::tests::store("claude-other");
+        let mut t3 = T3Code::new(vec![s.path.clone()]);
+        let (mut t, mut out) = (Turn::default(), Vec::new());
+        feed(&mut t, &serde_json::from_str(&lines[0]).unwrap(), &mut t3, &mut out);
+        assert_eq!(out.len(), 1);
     }
 
     #[test]
@@ -771,7 +818,7 @@ mod tests {
         let mut t = Turn { sub: true, ..Turn::default() };
         let mut out = Vec::new();
         for l in [P, TOOL, &result("e1", patch), DONE] {
-            feed(&mut t, &serde_json::from_str(l).unwrap(), &mut out);
+            feed(&mut t, &serde_json::from_str(l).unwrap(), &mut T3Code::new(Vec::new()), &mut out);
         }
         assert_eq!(out.len(), 1);
         assert_eq!(edits(&out).len(), 1);

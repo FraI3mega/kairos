@@ -12,6 +12,7 @@ pub mod hermes;
 pub mod opencode;
 pub mod pi;
 pub mod qwen;
+pub mod t3code;
 mod snapshot;
 mod tail;
 mod work;
