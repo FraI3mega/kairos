@@ -210,6 +210,8 @@ pub fn tool_name(id: &str) -> String {
         "kilo" => "Kilo",
         "opencode" => "opencode",
         "qwen-code" => "Qwen Code",
+        "pi" => "Pi",
+        "hermes" => "Hermes",
         other => return other.to_string(),
     }
     .to_string()

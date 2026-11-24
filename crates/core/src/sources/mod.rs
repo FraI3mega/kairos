@@ -7,7 +7,9 @@ pub mod copilot;
 pub mod copilot_cli;
 pub mod cursor;
 pub mod gemini;
+pub mod hermes;
 pub mod opencode;
+pub mod pi;
 pub mod qwen;
 mod snapshot;
 mod tail;
@@ -53,6 +55,8 @@ pub fn all() -> Vec<Box<dyn Source>> {
         Box::new(cline::kilo()),
         Box::new(gemini::Gemini::new(gemini::default_root())),
         Box::new(qwen::Qwen::new(qwen::default_roots())),
+        Box::new(pi::Pi::new(pi::default_roots())),
+        Box::new(hermes::Hermes::new(hermes::default_roots())),
     ]
 }
 

@@ -27,9 +27,9 @@ const BROWSERS: &[&str] = &[
 ];
 const AGENT_APPS: &[&str] = &[
     "antigravity", "com.anthropic.claude", "claude-desktop", "com.t3tools.t3code", "t3code", "chatgpt",
-    "com.anthropic.claudefordesktop", "com.openai.chat",
+    "com.anthropic.claudefordesktop", "com.openai.chat", "hermes",
 ];
-const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot"];
+const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot", "pi", "hermes"];
 const EDITORS: &[&str] = &[
     "code", "code-oss", "vscode", "codium", "vscodium", "cursor", "windsurf", "zed", "zeditor",
     "zed-editor", "dev.zed.zed", "nvim", "neovide", "vim", "gvim", "nano", "helix", "hx", "emacs",
@@ -72,8 +72,10 @@ fn is_agent_app(name: &str, wclass: &str) -> bool {
 
 pub fn is_agent_title(title: &str) -> bool {
     let lower = title.to_lowercase();
+    // Pi titles its terminal "π - <folder>"; "pi" itself is inside too many words to look for.
     title.starts_with(|c: char| c == '✳' || ('\u{2800}'..='\u{28ff}').contains(&c))
-        || AGENT_CLIS.iter().any(|n| lower.contains(n))
+        || title.starts_with("π - ")
+        || AGENT_CLIS.iter().filter(|n| **n != "pi").any(|n| lower.contains(n))
 }
 
 /// An editor by its executable or window class alone (a JetBrains IDE started through java needs its command line too).
@@ -167,8 +169,19 @@ pub trait Procs {
 }
 
 fn is_agent_cli<P: Procs>(p: &P, pid: u32) -> bool {
-    let name = p.name(pid);
-    if AGENT_CLIS.contains(&p.comm(pid).as_str()) || AGENT_CLIS.contains(&name.as_str()) {
+    let (name, comm) = (p.name(pid), p.comm(pid));
+    if name.starts_with("python") || name == "hermes" || comm == "hermes" {
+        let args = p.cmdline(pid);
+        // The Hermes CLI starts its gateway as its own child, running in the Hermes install folder.
+        if args.windows(2).any(|w| w[0] == "gateway" && w[1] == "run") {
+            return false;
+        }
+        // Hermes's launcher runs its own Python with an inline script that imports hermes_cli.
+        if name.starts_with("python") && args.iter().take(4).any(|a| a.contains("hermes_cli")) {
+            return true;
+        }
+    }
+    if AGENT_CLIS.contains(&comm.as_str()) || AGENT_CLIS.contains(&name.as_str()) {
         return true;
     }
     matches!(name.as_str(), "node" | "bun")
@@ -177,6 +190,9 @@ fn is_agent_cli<P: Procs>(p: &P, pid: u32) -> bool {
             a.contains("claude-code")
                 || a.contains("/@openai/codex")
                 || a.contains("/opencode-ai/")
+                || a.contains("/@earendil-works/pi-coding-agent/")
+                || a.ends_with("/ui-tui/dist/entry.js")
+                || a.ends_with("/hermes_cli/tui_dist/entry.js")
                 || Path::new(&a)
                     .file_stem()
                     .is_some_and(|n| AGENT_CLIS.iter().any(|c| n == *c))
@@ -494,17 +510,50 @@ mod tests {
 
     #[test]
     fn every_agent_cli_with_a_reader_counts() {
-        for cli in ["claude", "codex.exe", "opencode", "agy", "agy.exe", "gemini", "qwen", "kilo", "copilot"] {
+        for cli in ["claude", "codex.exe", "opencode", "agy", "agy.exe", "gemini", "qwen", "kilo", "copilot", "pi", "pi.exe", "hermes.exe"] {
             let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, cli)]);
             assert_eq!(class_of(&f, 10, ""), Class::AgentTerminal, "{cli}");
         }
     }
 
     #[test]
+    fn hermes_runs_as_its_own_python() {
+        let script = "import os, re, sys\nsys.path.insert(0, '/home/a/.hermes/hermes-agent')\nfrom hermes_cli.main import main\nsys.exit(main())";
+        let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, "python3")])
+            .args(13, &["/home/a/.hermes/tools/hermes-agent/bin/python3", "-I", "-c", script, "chat"]);
+        assert_eq!(class_of(&f, 10, ""), Class::AgentTerminal);
+        let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, "python3")]).args(13, &["python3", "manage.py", "runserver"]);
+        assert_ne!(class_of(&f, 10, ""), Class::AgentTerminal);
+        assert!(is_agent_app("hermes", "") && is_agent_app("hermes-canary", ""));
+    }
+
+    #[test]
+    fn hermes_gateway_under_the_cli_does_not_move_the_project() {
+        let dir = repo("hermes");
+        let install = repo("hermes-install");
+        let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, "hermes"), (14, 13, "python3.14")])
+            .cwd(13, &dir)
+            .args(13, &["/home/a/.hermes/tools/python-3.14/bin/python3", "-I", "-c", "from hermes_cli.main import main"])
+            .cwd(14, &install)
+            .args(14, &["/home/a/.hermes/tools/python-3.14/bin/python3", "-m", "hermes_cli.main", "--profile", "default", "gateway", "run", "--quiet", "--idle-exit"]);
+        let Classified { class, project, .. } = classify_with(&f, 10, "", "");
+        assert_eq!(class, Class::AgentTerminal);
+        assert_eq!(project.unwrap().root, dir);
+    }
+
+    #[test]
+    fn agent_titles() {
+        assert!(is_agent_title("π - kairos") && is_agent_title("✳ Fix the parser") && is_agent_title("opencode"));
+        assert!(!is_agent_title("pip install requests") && !is_agent_title("api-server: bash") && !is_agent_title("pi@raspberrypi: ~"));
+    }
+
+    #[test]
     fn node_running_an_agent_cli_counts() {
         for script in ["C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
             "C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
-            "C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode"]
+            "C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode",
+            "C:\\Users\\a\\.pi\\agent\\install\\releases\\1.6.0\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\bundle\\cli.js",
+            "C:\\Users\\a\\AppData\\Local\\hermes\\hermes-agent\\ui-tui\\dist\\entry.js"]
         {
             let f = Fake::new(&[(10, 1, "WindowsTerminal.exe"), (12, 10, "cmd.exe"), (13, 12, "node.exe")])
                 .args(13, &["node.exe", script]);
