@@ -480,6 +480,17 @@ p code {
   font-size: 15px;
 }
 
+.late {
+  visibility: hidden;
+  animation: late 0s 5s forwards;
+}
+
+@keyframes late {
+  to {
+    visibility: visible;
+  }
+}
+
 .code {
   display: inline-block;
   font: 500 30px/1 'IBM Plex Mono',monospace;
