@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-agent"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-cli"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-release"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-server"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "askama",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "kairos-sim"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "chrono",
