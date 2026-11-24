@@ -127,7 +127,7 @@ pub fn spawn(shadow: Arc<Shadow>, data: PathBuf, bound: Arc<AtomicBool>, tx: Sen
                 continue;
             };
             let started = Instant::now();
-            let result = runs.iter().try_for_each(|claude| run(&dir, &cli, shadow.key(), claude.as_deref()));
+            let result = runs.iter().try_for_each(|claude| run(&dir, &cli, &url(), shadow.key(), claude.as_deref()));
             let error = result.err().map(|e| format!("{e:#}"));
             if error != failed {
                 match &error {
@@ -153,8 +153,8 @@ fn relaying(data: &Path) -> bool {
     s.config == config && matches!(wakatime::points(&config), Ok(Points::Kairos))
 }
 
-fn run(dir: &Path, cli: &Path, key: &str, claude: Option<&Path>) -> Result<()> {
-    wakatime::prepare_shadow(dir, wakatime::config_path().as_deref(), &url(), key, chrono::Utc::now())?;
+pub(crate) fn run(dir: &Path, cli: &Path, url: &str, key: &str, claude: Option<&Path>) -> Result<()> {
+    wakatime::prepare_shadow(dir, wakatime::config_path().as_deref(), url, key, chrono::Utc::now())?;
     execute(command(cli, dir, claude), cli)
 }
 

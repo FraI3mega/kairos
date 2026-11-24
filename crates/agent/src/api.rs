@@ -858,6 +858,76 @@ mod tests {
         assert_eq!(get()["extension_seen_secs_ago"], json!(0));
     }
 
+    /// The whole way round with nothing stood in for: the official wakatime-cli, started as kairosd starts it, reads a Claude
+    /// Code log and sends what it makes of it to the API, which records it.
+    #[test]
+    #[ignore = "downloads the official wakatime-cli and runs it"]
+    fn the_real_wakatime_cli_sends_what_it_makes_of_a_claude_log() {
+        let tmp = std::env::temp_dir().join(format!("kairos-api-shadow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let (claude, project) = (tmp.join("claude"), tmp.join("project"));
+        let logs = claude.join("projects").join("-w-p");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let cli = kairos_core::wakatime_cli::install_in(&tmp.join("cli")).unwrap();
+
+        let server = Arc::new(Server::http(("127.0.0.1", 0)).unwrap());
+        let port = server.server_addr().to_ip().unwrap().port();
+        let (ctx, rx) = ctx_on(port);
+        thread::spawn(move || serve(server, &ctx));
+        let url = format!("http://127.0.0.1:{port}/shadow/v1");
+        let run = || crate::shadow::run(&tmp.join("hackatime-ai"), &cli, &url, SHADOW_KEY, Some(&claude));
+
+        run().expect("the first run, which only notes that the logs were read up to now");
+        assert!(rx.try_iter().all(|m| !matches!(m, Msg::Event(e) if matches!(e.kind, Kind::AiHeartbeat { .. }))), "nothing from before it");
+
+        // A turn that wrote a file, every line later than the first run.
+        thread::sleep(Duration::from_millis(1500));
+        let file = project.join("notes.txt");
+        std::fs::write(&file, "one\ntwo\n").unwrap();
+        let started = chrono::Utc::now();
+        let line = |kind: &str, before_ms: i64, message: Value, result: Value| {
+            let at = (started - chrono::Duration::milliseconds(before_ms)).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+            json!({
+                "parentUuid": null, "isSidechain": false, "type": kind, "uuid": format!("00000000-0000-4000-8000-{before_ms:012}"), "timestamp": at,
+                "userType": "external", "cwd": project, "sessionId": "11111111-2222-4333-8444-555555555555", "version": "2.1.331", "gitBranch": "",
+                "message": message, "toolUseResult": result,
+            })
+            .to_string()
+        };
+        let reply = |id: &str, stop: &str, content: Value| {
+            json!({ "id": id, "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": [content], "stop_reason": stop, "usage": { "input_tokens": 10, "output_tokens": 20 } })
+        };
+        let log = [
+            line("user", 900, json!({ "role": "user", "content": "write the two lines into notes.txt please" }), Value::Null),
+            line("assistant", 700, reply("msg_1", "tool_use", json!({ "type": "tool_use", "id": "toolu_1", "name": "Write", "input": { "file_path": file, "content": "one\ntwo\n" } })), Value::Null),
+            line(
+                "user",
+                500,
+                json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "File created successfully" }] }),
+                json!({ "type": "create", "filePath": file, "content": "one\ntwo\n", "structuredPatch": [] }),
+            ),
+            line("assistant", 300, reply("msg_2", "end_turn", json!({ "type": "text", "text": "Done." })), Value::Null),
+        ];
+        std::fs::write(logs.join("11111111-2222-4333-8444-555555555555.jsonl"), log.join("\n") + "\n").unwrap();
+
+        run().expect("the run after the turn");
+        let beats: Vec<(f64, bool)> = rx
+            .try_iter()
+            .filter_map(|m| match m {
+                Msg::Event(e) => match e.kind {
+                    Kind::AiHeartbeat { at, sent: false, agent: Some(a), write, .. } if a == "claude-code" => Some((at, write)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let turn = started.timestamp_millis() as f64 / 1000.0;
+        assert!(beats.iter().any(|(_, write)| *write), "the file the agent wrote: {beats:?}");
+        assert!(beats.iter().all(|(at, _)| (turn - 1.0..=turn).contains(at)), "at the times in the log: {beats:?}, turn {turn}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     // Not a test of its own: the test below re-runs this binary on it so a separate process, whose
     // working folder is a project, ends up owning a listening socket.
     #[test]

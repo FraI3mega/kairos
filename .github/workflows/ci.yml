@@ -37,6 +37,9 @@ jobs:
           else
             cargo test --locked --workspace --exclude kairos-server
           fi
+      - name: wakatime-cli reads an agent's log
+        shell: bash
+        run: cargo test --locked -p kairos-agent -- --ignored --exact api::tests::the_real_wakatime_cli_sends_what_it_makes_of_a_claude_log --nocapture
       - name: package
         shell: bash
         run: |

@@ -72,13 +72,17 @@ fn find_in(dir: &Path, path: Option<&OsStr>, platform: &str) -> Option<PathBuf> 
 
 /// Gets the official wakatime-cli into [`resources_dir`], where plugins look for it, unless one is already there.
 pub fn install() -> Result<PathBuf> {
+    install_in(&resources_dir().context("cannot find your home folder")?)
+}
+
+/// [`install`], into `dir`.
+pub fn install_in(dir: &Path) -> Result<PathBuf> {
     let platform = platform().context("wakatime-cli has no build for this computer")?;
-    let dir = resources_dir().context("cannot find your home folder")?;
     let dest = dir.join(file_name(platform));
     if dest.is_file() {
         return Ok(dest);
     }
-    place(&download(platform)?, sum(platform), &file_name(platform), &dir)
+    place(&download(platform)?, sum(platform), &file_name(platform), dir)
 }
 
 fn download(platform: &str) -> Result<Vec<u8>> {
