@@ -83,11 +83,21 @@ fn cowork_folder(p: &Path) -> Option<PathBuf> {
     meta.get("userSelectedFolders")?.as_array()?.iter().find_map(|f| f.as_str()).map(PathBuf::from)
 }
 
+fn started_name(log: &Path) -> Option<String> {
+    log.parent()?.file_name()?.to_str().map(str::to_string)
+}
+
+// How Claude Code names a folder's log folder: every UTF-16 unit that isn't an ASCII letter or digit becomes a dash.
+fn log_folder_name(folder: &Path) -> String {
+    folder.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-".repeat(c.len_utf16()) }).collect()
+}
+
 #[derive(Default)]
 struct Turn {
     session: String,
     cwd: Option<PathBuf>,
     folder: Option<PathBuf>,
+    started: Option<String>,
     armed: bool,
     open: bool,
     last_ts: f64,
@@ -103,6 +113,14 @@ struct Turn {
 }
 
 impl Turn {
+    // A log's cwd follows the agent's `cd`, while the window it was typed in stays where it was started. Claude Code names
+    // the log's folder after that start folder, so turns are filed there when the cwd is inside it.
+    fn start(&self) -> Option<PathBuf> {
+        let cwd = self.cwd.as_ref()?;
+        let start = cwd.ancestors().find(|a| self.started.as_deref().is_some_and(|s| log_folder_name(a) == s));
+        Some(start.unwrap_or(cwd).to_path_buf())
+    }
+
     fn close(&mut self, ts: f64, out: &mut Vec<Found>) {
         if !self.open {
             return;
@@ -111,7 +129,7 @@ impl Turn {
         self.armed = false;
         out.push(Found {
             ts,
-            cwd: self.cwd.clone(),
+            cwd: self.start(),
             kind: Kind::ReplyDone {
                 session: self.session.clone(),
                 reply_words: self.reply_words,
@@ -239,7 +257,7 @@ fn answered(turn: &mut Turn, e: &Value, ts: f64, out: &mut Vec<Found>) {
                     _ => 0,
                 };
                 let kind = Kind::Answered { session: session.clone(), asked, why, shown_words, answer_words };
-                out.push(Found { ts, cwd: turn.cwd.clone(), kind });
+                out.push(Found { ts, cwd: turn.start(), kind });
             }
             _ => {}
         }
@@ -306,6 +324,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
                 session: session.clone(),
                 cwd: turn.cwd.take(),
                 folder: turn.folder.take(),
+                started: turn.started.take(),
                 commands: std::mem::take(&mut turn.commands),
                 restoring: std::mem::take(&mut turn.restoring),
                 asks: std::mem::take(&mut turn.asks),
@@ -317,7 +336,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
             };
             out.push(Found {
                 ts,
-                cwd: turn.cwd.clone(),
+                cwd: turn.start(),
                 kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e) },
             });
             return;
@@ -335,7 +354,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
             let shape = Some(prompt_shape(&text));
             out.push(Found {
                 ts,
-                cwd: turn.cwd.clone(),
+                cwd: turn.start(),
                 kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e) },
             });
         }
@@ -361,7 +380,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
                             turn.armed = false;
                             out.push(Found {
                                 ts,
-                                cwd: turn.cwd.clone(),
+                                cwd: turn.start(),
                                 kind: Kind::AgentStart { session: turn.session.clone() },
                             });
                         }
@@ -431,7 +450,7 @@ impl Source for Claude {
             if let Ok(e) = serde_json::from_str::<Value>(line) {
                 let turn = turns
                     .entry(path.to_path_buf())
-                    .or_insert_with(|| Turn { folder: cowork_folder(path), sub: subagent(path), ..Turn::default() });
+                    .or_insert_with(|| Turn { folder: cowork_folder(path), started: started_name(path), sub: subagent(path), ..Turn::default() });
                 feed(turn, &e, t3, &mut out);
             }
         });
@@ -589,6 +608,30 @@ mod tests {
         let kinds: Vec<&str> = src.poll().iter().map(|f| f.kind.name()).collect();
         assert_eq!(kinds, ["reply_done"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn turns_stay_in_the_folder_the_session_started_in_after_a_cd() {
+        let dir = std::env::temp_dir().join(format!("kairos-claude-started-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("-w")).unwrap();
+        let f = dir.join("-w/s1.jsonl");
+        std::fs::write(&f, "").unwrap();
+        let mut src = Claude::new(vec![dir.clone()]);
+        assert!(src.poll().is_empty());
+        let commit = bash("b1", "git commit -m x");
+        let done = bash_result("b1", "[main abc1234] x\n", false);
+        let outside = P.replace("/w/p", "/x/y").replace("10:00:00", "10:05:00");
+        std::fs::write(&f, format!("{P}\n{commit}\n{done}\n{DONE}\n{outside}\n")).unwrap();
+        let out = src.poll();
+        let at: Vec<(&str, Option<&Path>)> = out.iter().map(|f| (f.kind.name(), f.cwd.as_deref())).collect();
+        let (w, p, y) = (Some(Path::new("/w")), Some(Path::new("/w/p")), Some(Path::new("/x/y")));
+        assert_eq!(at, [("prompt", w), ("agent_start", w), ("agent_commit", p), ("reply_done", w), ("prompt", y)]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(run(&[P])[0].cwd.as_deref(), p, "no log folder name, the cwd as before");
+        assert_eq!(log_folder_name(Path::new("/home/cool/Documents/active/obayy.dev")), "-home-cool-Documents-active-obayy-dev");
+        assert_eq!(log_folder_name(Path::new("/w/001 Voice é😀")), "-w-001-Voice----");
     }
 
     #[test]
