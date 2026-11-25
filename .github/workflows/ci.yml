@@ -29,6 +29,13 @@ jobs:
           docker run -d --name pg -e POSTGRES_USER=kairos -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=kairos -p 5432:5432 postgres:17-alpine
           for i in $(seq 60); do docker exec pg pg_isready -q -h 127.0.0.1 -U kairos -d kairos && exit 0; sleep 1; done
           docker logs pg; exit 1
+      - name: sessions saved by the lab
+        if: runner.os == 'Linux'
+        uses: actions/checkout@v4
+        with:
+          ref: lab
+          path: lab
+          sparse-checkout: samples
       - name: tests
         shell: bash
         run: |

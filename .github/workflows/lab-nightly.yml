@@ -1,0 +1,13 @@
+name: lab nightly
+# The lab lives on the lab branch. Schedules only run from main, so this starts it.
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  lab:
+    uses: hackclub/kairos/.github/workflows/lab.yml@lab
+    secrets: inherit
