@@ -190,8 +190,10 @@ pub fn spawn(tx: Sender<Msg>, watch: Sender<Watch>, state_path: PathBuf, exclude
         let mut sessions_saved = Instant::now();
         loop {
             let mut state = Map::new();
+            let mut reported = false;
             for s in &mut srcs {
                 let found = s.poll();
+                reported |= !found.is_empty();
                 // Read after the poll: anything it found was written before this, so a folder
                 // excluded in the meantime is already on the list.
                 let ex = excluded.current();
@@ -210,7 +212,8 @@ pub fn spawn(tx: Sender<Msg>, watch: Sender<Watch>, state_path: PathBuf, exclude
                 state.insert(s.name().to_string(), s.state());
             }
             let text = Value::Object(state).to_string();
-            if text != saved_text && saved_at.elapsed() >= SAVE_EVERY {
+            // What was just reported is saved as read right away, or a restart within the minute would report it again.
+            if text != saved_text && (reported || saved_at.elapsed() >= SAVE_EVERY) {
                 save(&state_path, &text);
                 saved_text = text;
                 saved_at = Instant::now();
