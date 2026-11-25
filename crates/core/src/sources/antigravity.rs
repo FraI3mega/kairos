@@ -18,6 +18,8 @@ const HISTORY_SLACK: f64 = 3.0;
 // Steps wait this long before they are read, so the prompt history and subagent markers that are
 // written just after a transcript line are there when it is classified.
 const SETTLE: f64 = 5.0;
+// Set on a line that showed up while the reader was already watching its file, to when it was read.
+const SEEN: &str = "_kairos_seen";
 
 // The 1.x IDE's encrypted .pb conversations are skipped; it only gets transcripts once it moves to the 2.0 format.
 pub fn default_roots() -> Vec<PathBuf> {
@@ -339,9 +341,13 @@ fn created(c: &mut Conv, rest: &str, ts: f64, out: &mut Vec<Found>) {
 }
 
 fn feed(c: &mut Conv, e: &Value, out: &mut Vec<Found>) {
-    let Some(ts) = ts(e) else { return };
+    let Some(created) = ts(e) else { return };
     let source = e.get("source").and_then(Value::as_str).unwrap_or("");
     let ty = e.get("type").and_then(Value::as_str).unwrap_or("");
+    // A model step is stamped with when it began, but its line is written once the model is done with it, which for a
+    // long answer is much later. When the reader saw the line arrive, that is closer to when the reply was done.
+    let seen = (source == "MODEL" && ty == "PLANNER_RESPONSE").then(|| e.get(SEEN).and_then(Value::as_f64)).flatten();
+    let ts = seen.map_or(created, |s| s.max(created));
     let done = e.get("status").and_then(Value::as_str) == Some("DONE");
     if source == "MODEL" && done {
         agent_work(c, e, ts, out);
@@ -432,11 +438,12 @@ pub struct Antigravity {
     tail: Tail,
     convs: HashMap<PathBuf, Conv>,
     models: HashMap<PathBuf, String>,
+    watching: bool,
 }
 
 impl Antigravity {
     pub fn new(roots: Vec<PathBuf>) -> Antigravity {
-        Antigravity { tail: Tail::with(roots, list), convs: HashMap::new(), models: HashMap::new() }
+        Antigravity { tail: Tail::with(roots, list), convs: HashMap::new(), models: HashMap::new(), watching: false }
     }
 }
 
@@ -447,12 +454,19 @@ impl Source for Antigravity {
 
     fn poll(&mut self) -> Vec<Found> {
         let convs = &mut self.convs;
+        // Lines from the first poll were written any time while kairosd was not running.
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let seen = self.watching.then_some(now);
         self.tail.poll(|path, line| {
-            if let Ok(e) = serde_json::from_str::<Value>(line) {
+            if let Ok(mut e) = serde_json::from_str::<Value>(line) {
+                if let (Some(seen), Some(o)) = (seen, e.as_object_mut()) {
+                    o.insert(SEEN.to_string(), json!(seen));
+                }
                 convs.entry(path.to_path_buf()).or_default().pending.push(e);
             }
         });
-        let ready = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()) - SETTLE;
+        self.watching = true;
+        let ready = now - SETTLE;
         let mut out = Vec::new();
         for (path, c) in self.convs.iter_mut().filter(|(_, c)| !c.pending.is_empty()) {
             if !c.known {
@@ -460,6 +474,12 @@ impl Source for Antigravity {
                 c.init(path);
             }
             c.pending.sort_by_key(|e| e.get("step_index").and_then(Value::as_i64).unwrap_or(i64::MAX));
+            // Several lines read at once can't have been done after the step that follows them began.
+            for i in 1..c.pending.len() {
+                if let (Some(next), Some(seen)) = (ts(&c.pending[i]), c.pending[i - 1].get(SEEN).and_then(Value::as_f64)) {
+                    c.pending[i - 1][SEEN] = json!(seen.min(next));
+                }
+            }
             let n = c.pending.iter().position(|e| ts(e).is_some_and(|t| t > ready)).unwrap_or(c.pending.len());
             let steps: Vec<Value> = c.pending.drain(..n).collect();
             for e in &steps {
@@ -618,6 +638,38 @@ mod tests {
         let out = again.poll();
         assert_eq!(names(&out), ["prompt"]);
         assert!(matches!(&out[0].kind, Kind::Prompt { words: 4, model: Some(m), .. } if m == "Gemini 3.8 Flash (High)"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reply_read_as_it_arrives_is_done_when_its_line_showed_up() {
+        let dir = std::env::temp_dir().join(format!("kairos-agy-seen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let root = dir.join("antigravity-cli");
+        let main = root.join("brain/c1").join(TRANSCRIPT);
+        write(&main, "");
+        write(&root.join("cache/last_conversations.json"), r#"{"/w/p":"c1"}"#);
+        let mut src = Antigravity::new(vec![root.clone()]);
+        assert!(src.poll().is_empty());
+        let now = chrono::Utc::now().timestamp() as f64;
+        let at = |ago: f64| chrono::DateTime::from_timestamp((now - ago) as i64, 0).unwrap().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let user = USER.replace("2026-11-19T10:00:00Z", &at(120.0));
+        let plan = PLAN.replace("2026-11-19T10:00:05Z", &at(115.0));
+        // The model began its closing answer 100 s ago, and the line is written once the answer is done.
+        let done = DONE.replace("2026-11-19T10:01:00Z", &at(100.0));
+        write(&main, &format!("{user}\n{plan}\n{done}\n"));
+        let out = src.poll();
+        assert_eq!(names(&out), ["prompt", "agent_start", "reply_done"]);
+        assert!(out[2].ts >= now - 2.0, "reply_done at {} for a line read at {now}", out[2].ts);
+        // Read in the same poll, the step after it began at once, so that's as late as the answer can have been done.
+        assert_eq!(out[1].ts, now - 100.0);
+
+        // On the first poll after a start the lines could have been written any time kairosd was not running.
+        let mut fresh = Antigravity::new(vec![root.clone()]);
+        fresh.restore(&json!({ "since": now - 200.0, "files": { (main.to_string_lossy().to_string()): 0 } }));
+        let out = fresh.poll();
+        assert_eq!(names(&out), ["prompt", "agent_start", "reply_done"]);
+        assert_eq!(out[2].ts, now - 100.0);
         let _ = fs::remove_dir_all(&dir);
     }
 
