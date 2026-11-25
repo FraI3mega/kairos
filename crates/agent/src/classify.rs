@@ -31,6 +31,9 @@ const BROWSERS: &[&str] = &[
 const AGENT_APPS: &[&str] = &[
     "antigravity", "com.anthropic.claude", "claude-desktop", "com.t3tools.t3code", "t3code", "chatgpt",
     "com.anthropic.claudefordesktop", "com.openai.chat", "hermes", "codex", "com.openai.codex", "t3-code",
+    // OpenCode's desktop app: `ai.opencode` on Linux (window class `ai.opencode.desktop`, the Mac bundle id too),
+    // OpenCode.exe on Windows. Its CLI never owns a window, the terminal does.
+    "opencode", "ai.opencode",
 ];
 const AGENT_CLIS: &[&str] = &["claude", "codex", "opencode", "agy", "gemini", "qwen", "kilo", "copilot", "pi", "hermes", "amp"];
 const EDITORS: &[&str] = &[
@@ -513,6 +516,9 @@ mod tests {
         assert!(is_agent_app(&normalize("T3 Code.exe"), ""));
         assert!(is_agent_app(&normalize("Codex.exe"), ""));
         assert!(is_agent_app("codex", "com.openai.codex"));
+        assert!(is_agent_app("ai.opencode", "ai.opencode.desktop"));
+        assert!(is_agent_app("electron", "ai.opencode.desktop"));
+        assert!(is_agent_app(&normalize("OpenCode.exe"), ""));
         assert!(!is_agent_app("claude", "kitty"));
         assert!(!is_agent_app("code", "code"));
     }
