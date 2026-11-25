@@ -7,7 +7,7 @@ use super::claude_history::History;
 use super::t3code::T3Code;
 use super::{string_words, work, words, Found, Source, Tail};
 use crate::event::{Ask, Kind};
-use crate::parse::{timestamp, user_line, UserLine};
+use crate::parse::{timestamp, unwrap_pastes, user_line, UserLine};
 use crate::{prompt_shape, prompt_stats};
 
 pub fn default_roots() -> Vec<PathBuf> {
@@ -329,10 +329,10 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
         UserLine::Other => {}
     }
     if ty == "attachment" {
-        if let Some(text) = queued_prompt(e).filter(|_| !sent_by_t3(turn, e, ts, t3)) {
+        if let Some(text) = queued_prompt(e).filter(|_| !sent_by_t3(turn, e, ts, t3)).map(unwrap_pastes) {
             let session = e.get("sessionId").and_then(Value::as_str).unwrap_or_default().to_string();
-            let (words, pasted) = prompt_stats(text);
-            let shape = Some(prompt_shape(text));
+            let (words, pasted) = prompt_stats(&text);
+            let shape = Some(prompt_shape(&text));
             out.push(Found {
                 ts,
                 cwd: turn.cwd.clone(),
@@ -558,6 +558,17 @@ mod tests {
         let out = run(&[P, TOOL, &quoted]);
         let kinds: Vec<&str> = out.iter().map(|f| f.kind.name()).collect();
         assert_eq!(kinds, ["prompt", "agent_start", "reply_done", "prompt"], "a prompt that mentions the marker is a prompt");
+    }
+
+    #[test]
+    fn a_paste_counts_without_the_tags_claude_code_puts_around_it() {
+        let text = r#"this is the log, can you look? \n\n<pasted_content id=\"05e3\">\n$ python hello.py\nhello kairos\n</pasted_content id=\"05e3\">\n"#;
+        let out = run(&[&P.replace("please fix the failing parser test now", text)]);
+        let Kind::Prompt { words, .. } = &out[0].kind else { panic!("{out:?}") };
+        assert_eq!(*words, 7 + 5);
+        assert_eq!(unwrap_pastes("a \n\n<pasted_content id=\"1f\">\nx\ny\n</pasted_content id=\"1f\">\nb"), "a x\ny\nb");
+        let typed = "see <pasted_content id=\"no such\"> here";
+        assert_eq!(unwrap_pastes(typed), typed);
     }
 
     #[test]

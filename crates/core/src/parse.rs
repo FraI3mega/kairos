@@ -264,7 +264,7 @@ fn classify(e: &Value) -> Kind {
         }
         _ => return Kind::Other,
     };
-    let text = strip_reminders(&text);
+    let text = unwrap_pastes(&strip_reminders(&text));
     let text = text.trim();
     if text.is_empty() || SKIP_PREFIXES.iter().any(|p| text.starts_with(p)) {
         return Kind::Other;
@@ -286,6 +286,33 @@ pub(crate) fn strip_reminders(s: &str) -> String {
         let Some(j) = after.find(CLOSE) else { break };
         out.push_str(&rest[..i]);
         rest = &after[j + CLOSE.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Claude Code 2.1 writes a paste into the transcript on its own lines between `<pasted_content id="…">` tags, after a
+/// blank line. What the person sent is the text around it with the paste in its place.
+pub(crate) fn unwrap_pastes(s: &str) -> String {
+    const OPEN: &str = "<pasted_content id=\"";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        let after = &rest[i + OPEN.len()..];
+        let Some(end) = after.find("\">") else { break };
+        let id = &after[..end];
+        if id.is_empty() || id.len() > 32 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            break;
+        }
+        let body = &after[end + 2..];
+        let close = format!("</pasted_content id=\"{id}\">");
+        let Some(j) = body.find(&close) else { break };
+        let before = &rest[..i];
+        out.push_str(before.strip_suffix("\n\n").unwrap_or(before));
+        let inner = &body[..j];
+        out.push_str(inner.strip_prefix('\n').unwrap_or(inner));
+        let tail = &body[j + close.len()..];
+        rest = tail.strip_prefix('\n').unwrap_or(tail);
     }
     out.push_str(rest);
     out
