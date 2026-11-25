@@ -32,6 +32,60 @@ pub fn kilo_db() -> PathBuf {
     std::env::var_os("KILO_DB").map(PathBuf::from).unwrap_or_else(|| data_home().join("kilo/kilo.db"))
 }
 
+// OpenCode desktop keeps its state in Electron's app data folder, named after the app's id, one per release channel
+// (packages/desktop/src/main/identity.ts and lifecycle/configure.ts).
+pub fn desktop_dirs() -> Vec<PathBuf> {
+    let Some(base) = dirs::config_dir() else { return Vec::new() };
+    ["ai.opencode.desktop", "ai.opencode.desktop.beta", "ai.opencode.desktop.dev"].iter().map(|id| base.join(id)).collect()
+}
+
+/// The folder of the tab open in OpenCode desktop. Its window shows every project and its title doesn't say which,
+/// but the app writes each window's open tab to its own store a moment after a switch (packages/app/src/shell/tabs).
+/// `None` unless every window the app has open shows the same folder, since which one is in front can't be told.
+pub fn desktop_folder(dirs: &[PathBuf]) -> Option<PathBuf> {
+    let mut found: Option<PathBuf> = None;
+    for dir in dirs {
+        let Ok(settings) = std::fs::read_to_string(dir.join("opencode.settings")) else { continue };
+        let settings: Value = serde_json::from_str(&settings).ok()?;
+        let ids: Vec<&str> = settings["windowIds"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        if ids.is_empty() {
+            continue;
+        }
+        let conn = open(&dir.join("drafts.sqlite"))?;
+        for id in ids {
+            let folder = window_folder(&conn, id)?;
+            if found.as_ref().is_some_and(|f| *f != folder) {
+                return None;
+            }
+            found = Some(folder);
+        }
+    }
+    found
+}
+
+// Only tabs on the app's own server: a folder on another machine says nothing about this one.
+fn window_folder(conn: &Connection, id: &str) -> Option<PathBuf> {
+    let name = format!("opencode.window.{id}.dat");
+    let get = |key: &str| -> Option<Value> {
+        let v: String = conn.query_row("SELECT value FROM state WHERE name = ?1 AND key = ?2", params![name, key], |r| r.get(0)).ok()?;
+        serde_json::from_str(&v).ok()
+    };
+    let key = get("tabs.recent")?["key"].as_str()?.to_string();
+    let folder = match key.strip_prefix("draft:") {
+        Some(draft) => {
+            let tabs = get("tabs")?;
+            let tab = tabs.as_array()?.iter().find(|t| t["type"] == "draft" && t["draftID"] == draft)?;
+            (tab["server"] == "sidecar").then(|| tab["directory"].as_str().map(str::to_string)).flatten()?
+        }
+        None => {
+            let (server, _) = key.split_once('\n')?;
+            (server == "sidecar").then_some(())?;
+            get("tabs.info")?[&key]["directory"].as_str()?.to_string()
+        }
+    };
+    Some(PathBuf::from(folder))
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
@@ -1047,5 +1101,68 @@ mod tests {
             _ => None,
         });
         assert_eq!(files, Some(4));
+    }
+
+    struct Desktop(PathBuf);
+
+    impl Desktop {
+        fn new(name: &str, windows: &[&str]) -> Desktop {
+            let dir = std::env::temp_dir().join(format!("kairos-opencode-desktop-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("opencode.settings"), json!({ "windowIds": windows, "backgroundColor": "#fff" }).to_string()).unwrap();
+            Connection::open(dir.join("drafts.sqlite"))
+                .unwrap()
+                .execute_batch("CREATE TABLE state (name TEXT, key TEXT, value TEXT, updated_at INTEGER, PRIMARY KEY (name, key));")
+                .unwrap();
+            Desktop(dir)
+        }
+
+        fn set(&self, window: &str, key: &str, value: Value) {
+            Connection::open(self.0.join("drafts.sqlite"))
+                .unwrap()
+                .execute("INSERT OR REPLACE INTO state VALUES (?1, ?2, ?3, 0)", params![format!("opencode.window.{window}.dat"), key, value.to_string()])
+                .unwrap();
+        }
+
+        // A window on a session tab in `folder`, with a draft tab open next to it.
+        fn window(&self, id: &str, server: &str, folder: &str) {
+            let key = format!("{server}\n/server/c2lkZWNhcg/session/ses_{id}");
+            self.set(id, "tabs", json!([{ "type": "session", "server": server, "sessionId": format!("ses_{id}") },
+                                        { "type": "draft", "draftID": format!("d{id}"), "server": server, "directory": "/w/draft" }]));
+            let mut info = Map::new();
+            info.insert(key.clone(), json!({ "title": "t", "directory": folder, "prompted": true }));
+            self.set(id, "tabs.info", Value::Object(info));
+            self.set(id, "tabs.recent", json!({ "key": key }));
+        }
+    }
+
+    #[test]
+    fn the_desktop_window_is_in_the_folder_of_its_open_tab() {
+        let d = Desktop::new("one", &["w1"]);
+        d.window("w1", "sidecar", "/w/p");
+        assert_eq!(desktop_folder(&[d.0.clone()]), Some(PathBuf::from("/w/p")));
+        d.set("w1", "tabs.recent", json!({ "key": "draft:dw1" }));
+        assert_eq!(desktop_folder(&[d.0.clone()]), Some(PathBuf::from("/w/draft")));
+        assert_eq!(desktop_folder(&[d.0.join("nothing-here")]), None);
+    }
+
+    #[test]
+    fn the_desktop_window_has_no_folder_when_its_windows_disagree_or_the_tab_is_elsewhere() {
+        let two = Desktop::new("two", &["w1", "w2"]);
+        two.window("w1", "sidecar", "/w/p");
+        two.window("w2", "sidecar", "/w/q");
+        assert_eq!(desktop_folder(&[two.0.clone()]), None);
+        two.window("w2", "sidecar", "/w/p");
+        assert_eq!(desktop_folder(&[two.0.clone()]), Some(PathBuf::from("/w/p")));
+
+        // An open window whose tab can't be read might be the one in front.
+        let blank = Desktop::new("blank", &["w1", "w2"]);
+        blank.window("w1", "sidecar", "/w/p");
+        assert_eq!(desktop_folder(&[blank.0.clone()]), None);
+
+        let remote = Desktop::new("remote", &["w1"]);
+        remote.window("w1", "work-box", "/w/p");
+        assert_eq!(desktop_folder(&[remote.0.clone()]), None);
     }
 }

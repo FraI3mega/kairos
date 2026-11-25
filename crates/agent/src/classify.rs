@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use kairos_core::event::Class;
 use kairos_core::exclude::Exclusions;
 use kairos_core::project::{own_folder, project_of, Project};
-use kairos_core::sources::t3code;
+use kairos_core::sources::{opencode, t3code};
 
 const TERMINALS: &[&str] = &[
     "kitty", "alacritty", "foot", "footclient", "wezterm", "wezterm-gui", "gnome-terminal",
@@ -89,6 +89,12 @@ fn t3_projects() -> Vec<(String, PathBuf)> {
             projects
         }
     }
+}
+
+const OPENCODE_DESKTOP: &[&str] = &["opencode", "ai.opencode"];
+
+pub fn is_opencode_desktop(name: &str, wclass: &str) -> bool {
+    is_one_of(OPENCODE_DESKTOP, name) || is_one_of(OPENCODE_DESKTOP, &wclass.to_lowercase())
 }
 
 fn is_agent_app(name: &str, wclass: &str) -> bool {
@@ -418,6 +424,9 @@ fn classify_parts<P: Procs>(p: &P, pid: u32, name: &str, wclass: &str, title: &s
             if let Some(folder) = t3code::titled_folder(title, &t3_projects()) {
                 return (Class::AgentApp, g.project(folder));
             }
+        }
+        if is_opencode_desktop(name, &wclass) {
+            return (Class::AgentApp, opencode::desktop_folder(&opencode::desktop_dirs()).and_then(|f| g.project(&f)));
         }
         return (Class::AgentApp, titled_project(p, pid, title, g).or_else(|| editor_project(p, pid, g)));
     }

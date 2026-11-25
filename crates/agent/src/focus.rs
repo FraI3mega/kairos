@@ -6,14 +6,15 @@ use std::time::Duration;
 use kairos_core::event::{Class, Event, Kind};
 
 use crate::browser::BrowserState;
-use crate::classify::runs_children;
+use crate::classify::{is_opencode_desktop, runs_children};
 use crate::exclusions::Excluded;
 use crate::platform::{self, Foreground};
 use crate::watch::Watch;
 use crate::{now, Msg};
 
 const RECHECK: Duration = Duration::from_secs(15);
-// An agent or a dev server started in the terminal or editor in front changes its class without changing the window.
+// An agent or a dev server started in the terminal or editor in front changes its class without changing the window,
+// and OpenCode desktop changes project when another tab opens.
 const RECHECK_HOST: Duration = Duration::from_secs(3);
 
 pub fn spawn(reports: Receiver<Option<Foreground>>, events: Sender<Msg>, watch: Sender<Watch>, browser: Arc<BrowserState>, excluded: Arc<Excluded>) {
@@ -40,7 +41,7 @@ fn run(reports: &Receiver<Option<Foreground>>, events: &Sender<Msg>, watch: &Sen
             None => (Class::Other, None),
             Some(fg) => {
                 let c = platform::classify(fg, &excluded.current());
-                if runs_children(&c.app, &fg.wclass) {
+                if runs_children(&c.app, &fg.wclass) || is_opencode_desktop(&c.app, &fg.wclass) {
                     recheck = RECHECK_HOST;
                 }
                 if let Some(p) = &c.project {
