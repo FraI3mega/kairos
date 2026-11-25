@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 
-use crate::event::{Class, Event, Kind};
+use crate::event::{App, Class, Event, Kind};
 use crate::{total_secs, union, Interval, MIN_PROMPT_WORDS, PASTE_TYPED_WORDS_CAP, READ_WPM, TYPE_WPM};
 
 const THINK_SECS: f64 = 120.0;
@@ -43,6 +43,9 @@ pub const TRIP_MAX_SECS: f64 = 30.0;
 pub const BRIDGE_ANCHOR_SECS: f64 = 5.0;
 /// While an agent turn runs in the project, a bridged gap counts only up to this long after the person's last input.
 pub const BRIDGE_WAIT_SECS: f64 = 30.0;
+/// credit_v9 takes a prompt as typed in the agent app its log names when that app's window was in front with input at
+/// most this long before it.
+pub const TYPED_HERE_SECS: f64 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,7 +79,7 @@ impl CreditClass {
 
 /// Bump it whenever the live rule (`Rule::CURRENT`), `agent_turns` or the server's span and day building would store something different (a test
 /// pins the output): a server rebuilds every user stored under an older revision when it starts.
-pub const REVISION: i32 = 7;
+pub const REVISION: i32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
@@ -87,10 +90,11 @@ pub enum Rule {
     V6,
     V7,
     V8,
+    V9,
 }
 
 impl Rule {
-    pub const CURRENT: Rule = Rule::V8;
+    pub const CURRENT: Rule = Rule::V9;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -101,6 +105,7 @@ impl Rule {
             Rule::V6 => "credit_v6",
             Rule::V7 => "credit_v7",
             Rule::V8 => "credit_v8",
+            Rule::V9 => "credit_v9",
         }
     }
 
@@ -113,6 +118,7 @@ impl Rule {
             "v6" => Some(Rule::V6),
             "v7" => Some(Rule::V7),
             "v8" => Some(Rule::V8),
+            "v9" => Some(Rule::V9),
             _ => None,
         }
     }
@@ -126,6 +132,7 @@ impl Rule {
             Rule::V6 => credit_v6(events),
             Rule::V7 => credit_v7(events),
             Rule::V8 => credit_v8(events),
+            Rule::V9 => credit_v9(events),
         }
     }
 }
@@ -247,7 +254,7 @@ pub fn credit_v6(events: &[Event]) -> Vec<Credit> {
 }
 
 pub fn credit_v6_with(events: &[Event], params: &V6Params) -> Vec<Credit> {
-    credit_with(events, params, false, false)
+    credit_with(events, params, false, false, false)
 }
 
 /// credit_v6 made causal, so credit at a time depends only on events shortly after it and a bounded time before: a turn
@@ -259,7 +266,7 @@ pub fn credit_v7(events: &[Event]) -> Vec<Credit> {
 }
 
 pub fn credit_v7_with(events: &[Event], params: &V6Params) -> Vec<Credit> {
-    credit_with(events, params, true, false)
+    credit_with(events, params, true, false, false)
 }
 
 /// credit_v7 with what proves the person edited by hand while an agent runs taken from their editor: a file it saved (the
@@ -274,10 +281,21 @@ pub fn credit_v8(events: &[Event]) -> Vec<Credit> {
 }
 
 pub fn credit_v8_with(events: &[Event], params: &V6Params) -> Vec<Credit> {
-    credit_with(events, params, true, true)
+    credit_with(events, params, true, true, false)
 }
 
-fn credit_with(events: &[Event], params: &V6Params, v7: bool, v8: bool) -> Vec<Credit> {
+/// credit_v8 where an agent app window that shows many projects fits the prompts typed in it: one whose log says the person
+/// typed it in that app, while that app's window was in front with their input in the TYPED_HERE_SECS before it. The
+/// window then fits that prompt's typing, its replies' reading and the answers in its session, whatever project it shows.
+pub fn credit_v9(events: &[Event]) -> Vec<Credit> {
+    credit_v9_with(events, &V6Params::default())
+}
+
+pub fn credit_v9_with(events: &[Event], params: &V6Params) -> Vec<Credit> {
+    credit_with(events, params, true, true, true)
+}
+
+fn credit_with(events: &[Event], params: &V6Params, v7: bool, v8: bool, v9: bool) -> Vec<Credit> {
     let mut ev: Vec<&Event> = events.iter().collect();
     ev.sort_by(|a, b| a.ts.total_cmp(&b.ts));
     let mut focus = focuses(&ev);
@@ -286,19 +304,20 @@ fn credit_with(events: &[Event], params: &V6Params, v7: bool, v8: bool) -> Vec<C
     }
     let presents = presents(&ev);
     let presence = union(presents.iter().map(|p| (p.0, p.1)).collect());
-    let spans = focus_spans(&focus);
+    let spans = focus_spans(&focus, &if v9 { apps(&ev) } else { Vec::new() });
     let input = typing_base(&presents, &presence);
+    let typed = if v9 { typed_in_apps(&ev, &spans, &input) } else { Typed::new() };
     let turns = running_turns(&ev, params, v7);
     let evidence = if v8 { editor_evidence(&ev, &turns, params) } else { edit_evidence(&ev, &turns, params, v7) };
     let v5 = presence_credits(&focus, &presence, class_v5);
     let of = |class: CreditClass| -> Vec<Credit> { v5.iter().filter(|c| c.class == class).cloned().collect() };
     let resolved = resolve(vec![
-        typing_credits_v6(&ev, &spans, &input, params, v7),
-        answered_credits(&ev, &spans, &presence, params, v7),
+        typing_credits_v6(&ev, &spans, &input, &typed, params, v7),
+        answered_credits(&ev, &spans, &presence, &typed, params, v7),
         editing_credits_v6(of(CreditClass::Editing), &turns, &evidence, params.edit_evidence_secs, v7),
         of(CreditClass::Terminal),
         of(CreditClass::Testing),
-        reading_credits_v6(&ev, &spans, &presence, params, v7),
+        reading_credits_v6(&ev, &spans, &presence, &typed, params, v7),
     ]);
     let pauses = pause_windows(&ev, v7);
     let credited = without(resolved, &pauses);
@@ -309,10 +328,44 @@ fn credit_with(events: &[Event], params: &V6Params, v7: bool, v8: bool) -> Vec<C
     }
 }
 
+fn apps(ev: &[&Event]) -> Vec<(f64, Option<App>)> {
+    ev.iter()
+        .filter_map(|e| match &e.kind {
+            Kind::Focus { app, .. } => Some((e.ts, app.filter(|a| *a != App::Unknown))),
+            _ => None,
+        })
+        .collect()
+}
+
+// The agent app each prompt typed in one was typed in, by session and time (credit_v9).
+type Typed<'a> = HashMap<(&'a str, u64), App>;
+
+fn typed_in_apps<'a>(ev: &[&'a Event], spans: &[Span], input: &[Interval]) -> Typed<'a> {
+    let mut out = Typed::new();
+    for e in ev {
+        let Kind::Prompt { session, via: Some(app), .. } = &e.kind else { continue };
+        let lo = e.ts - TYPED_HERE_SECS;
+        let first = spans.partition_point(|s| s.end <= lo);
+        let here = spans[first..]
+            .iter()
+            .take_while(|s| s.start < e.ts)
+            .any(|s| s.class == Class::AgentApp && s.app == Some(*app) && !within(input, s.start.max(lo), s.end.min(e.ts)).is_empty());
+        if here {
+            out.insert((session.as_str(), e.ts.to_bits()), *app);
+        }
+    }
+    out
+}
+
+fn typed_app(typed: &Typed, e: &Event) -> Option<App> {
+    let Kind::Prompt { session, .. } = &e.kind else { return None };
+    typed.get(&(session.as_str(), e.ts.to_bits())).copied()
+}
+
 fn focuses<'a>(ev: &[&'a Event]) -> Vec<(f64, Class, Option<&'a str>)> {
     ev.iter()
         .filter_map(|e| match &e.kind {
-            Kind::Focus { class } => Some((e.ts, *class, e.project.as_deref())),
+            Kind::Focus { class, .. } => Some((e.ts, *class, e.project.as_deref())),
             _ => None,
         })
         .collect()
@@ -452,13 +505,17 @@ struct Span<'a> {
     end: f64,
     class: Class,
     project: Option<&'a str>,
+    app: Option<App>,
 }
 
-fn focus_spans<'a>(focus: &[(f64, Class, Option<&'a str>)]) -> Vec<Span<'a>> {
+fn focus_spans<'a>(focus: &[(f64, Class, Option<&'a str>)], apps: &[(f64, Option<App>)]) -> Vec<Span<'a>> {
     focus
         .iter()
         .enumerate()
-        .map(|(i, &(start, class, project))| Span { start, end: focus.get(i + 1).map_or(f64::MAX, |f| f.0), class, project })
+        .map(|(i, &(start, class, project))| {
+            let app = apps.partition_point(|a| a.0 <= start).checked_sub(1).and_then(|j| apps[j].1);
+            Span { start, end: focus.get(i + 1).map_or(f64::MAX, |f| f.0), class, project, app }
+        })
         .collect()
 }
 
@@ -481,6 +538,11 @@ fn project_fits(open: Option<&str>, exact: Option<&str>, v7: bool) -> bool {
     } else {
         same_project(open, exact)
     }
+}
+
+// The window shows the work's project, or (credit_v9) is the agent app it was typed in.
+fn fits(s: &Span, project: Option<&str>, app: Option<App>, v7: bool) -> bool {
+    project_fits(project, s.project, v7) || (app.is_some() && s.app == app)
 }
 
 /// The part of a sorted, disjoint list inside [lo, hi).
@@ -506,13 +568,13 @@ fn meet(a: &[Interval], b: &[Interval]) -> Vec<Interval> {
     out
 }
 
-/// Time inside [lo, hi) that is in `base` while a window of `class` showing `project` was in front.
-fn in_front(spans: &[Span], base: &[Interval], class: fn(Class) -> bool, project: Option<&str>, lo: f64, hi: f64, v7: bool) -> Vec<Interval> {
+/// Time inside [lo, hi) that is in `base` while an agent window that `fits` was in front.
+fn in_front(spans: &[Span], base: &[Interval], project: Option<&str>, app: Option<App>, lo: f64, hi: f64, v7: bool) -> Vec<Interval> {
     let first = spans.partition_point(|s| s.end <= lo);
     let front: Vec<Interval> = spans[first..]
         .iter()
         .take_while(|s| s.start < hi)
-        .filter(|s| class(s.class) && project_fits(project, s.project, v7))
+        .filter(|s| is_agent(s.class) && fits(s, project, app, v7))
         .map(|s| (s.start.max(lo), s.end.min(hi)))
         .collect();
     meet(&front, &within(base, lo, hi))
@@ -533,7 +595,7 @@ fn latest(list: &[Interval], budget: f64) -> Vec<Interval> {
     out
 }
 
-fn typing_credits_v6(ev: &[&Event], spans: &[Span], base: &[Interval], params: &V6Params, v7: bool) -> Vec<Credit> {
+fn typing_credits_v6(ev: &[&Event], spans: &[Span], base: &[Interval], typed: &Typed, params: &V6Params, v7: bool) -> Vec<Credit> {
     let mut last: HashMap<&str, f64> = HashMap::new();
     let mut out = Vec::new();
     for e in ev {
@@ -542,25 +604,30 @@ fn typing_credits_v6(ev: &[&Event], spans: &[Span], base: &[Interval], params: &
         if *words < MIN_PROMPT_WORDS {
             continue;
         }
-        let typed = if *pasted { (*words).min(PASTE_TYPED_WORDS_CAP) } else { *words };
+        let count = if *pasted { (*words).min(PASTE_TYPED_WORDS_CAP) } else { *words };
         let lo = (e.ts - params.lookback_secs).max(previous.unwrap_or(f64::MIN));
-        let seconds = in_front(spans, base, is_agent, e.project.as_deref(), lo, e.ts, v7);
-        for (start, end) in latest(&seconds, 60.0 * typed as f64 / params.type_wpm) {
+        let seconds = in_front(spans, base, e.project.as_deref(), typed_app(typed, e), lo, e.ts, v7);
+        for (start, end) in latest(&seconds, 60.0 * count as f64 / params.type_wpm) {
             out.push(Credit { start, end, project: e.project.clone(), class: CreditClass::Typing });
         }
     }
     out
 }
 
-fn answered_credits(ev: &[&Event], spans: &[Span], presence: &[Interval], params: &V6Params, v7: bool) -> Vec<Credit> {
+fn answered_credits(ev: &[&Event], spans: &[Span], presence: &[Interval], typed: &Typed, params: &V6Params, v7: bool) -> Vec<Credit> {
+    let mut app_of: HashMap<&str, Option<App>> = HashMap::new();
     let mut out = Vec::new();
     for e in ev {
-        let Kind::Answered { asked, shown_words, answer_words, .. } = &e.kind else { continue };
+        if let Kind::Prompt { session, .. } = &e.kind {
+            app_of.insert(session, typed_app(typed, e));
+        }
+        let Kind::Answered { session, asked, shown_words, answer_words, .. } = &e.kind else { continue };
         if !(*asked < e.ts) {
             continue;
         }
         let budget = 60.0 * (*shown_words as f64 / READ_WPM + *answer_words as f64 / params.type_wpm) + params.answer_think_secs;
-        let seconds = in_front(spans, presence, is_agent, e.project.as_deref(), asked.max(e.ts - params.answer_window_secs), e.ts, v7);
+        let app = app_of.get(session.as_str()).copied().flatten();
+        let seconds = in_front(spans, presence, e.project.as_deref(), app, asked.max(e.ts - params.answer_window_secs), e.ts, v7);
         for (start, end) in latest(&seconds, budget.min(params.answer_max_secs)) {
             out.push(Credit { start, end, project: e.project.clone(), class: CreditClass::Reading });
         }
@@ -574,26 +641,30 @@ struct Reply<'a> {
     until: f64,
     budget: f64,
     project: Option<&'a str>,
+    app: Option<App>,
 }
 
-fn replies<'a>(ev: &[&'a Event], params: &V6Params, v7: bool) -> Vec<Reply<'a>> {
-    let mut pending: HashMap<&'a str, (f64, usize, Option<&'a str>)> = HashMap::new();
+fn replies<'a>(ev: &[&'a Event], typed: &Typed, params: &V6Params, v7: bool) -> Vec<Reply<'a>> {
+    let mut pending: HashMap<&'a str, (f64, usize, Option<&'a str>, Option<App>)> = HashMap::new();
+    let mut app_of: HashMap<&'a str, Option<App>> = HashMap::new();
     let mut out = Vec::new();
-    let mut close = |session: &'a str, (from, reply_words, project): (f64, usize, Option<&'a str>), until: f64| {
+    let mut close = |session: &'a str, (from, reply_words, project, app): (f64, usize, Option<&'a str>, Option<App>), until: f64| {
         let until = until.min(from + params.read_expiry_secs);
-        out.push(Reply { session, from, until, budget: 60.0 * reply_words as f64 / READ_WPM + params.think_secs, project });
+        out.push(Reply { session, from, until, budget: 60.0 * reply_words as f64 / READ_WPM + params.think_secs, project, app });
     };
     for e in ev {
         match &e.kind {
             Kind::ReplyDone { session, reply_words, .. } => {
-                if let Some(old) = pending.insert(session, (e.ts, *reply_words, e.project.as_deref())) {
+                let app = app_of.get(session.as_str()).copied().flatten();
+                if let Some(old) = pending.insert(session, (e.ts, *reply_words, e.project.as_deref(), app)) {
                     close(session, old, e.ts);
                 }
             }
             Kind::Prompt { session, .. } => {
-                if let Some((from, words, project)) = pending.remove(session.as_str()) {
+                app_of.insert(session, typed_app(typed, e));
+                if let Some((from, words, project, app)) = pending.remove(session.as_str()) {
                     let project = if v7 { project } else { project.or(e.project.as_deref()) };
-                    close(session, (from, words, project), e.ts);
+                    close(session, (from, words, project, app), e.ts);
                 }
             }
             _ => {}
@@ -609,8 +680,8 @@ fn replies<'a>(ev: &[&'a Event], params: &V6Params, v7: bool) -> Vec<Reply<'a>> 
 // Each second goes to one reply. A reply's budget is spent only by seconds a work window showing its project was in
 // front, so time elsewhere pauses it. Where several want a second, the one whose project the agent window in front
 // shows comes first, then the oldest.
-fn reading_credits_v6(ev: &[&Event], spans: &[Span], presence: &[Interval], params: &V6Params, v7: bool) -> Vec<Credit> {
-    let replies = replies(ev, params, v7);
+fn reading_credits_v6(ev: &[&Event], spans: &[Span], presence: &[Interval], typed: &Typed, params: &V6Params, v7: bool) -> Vec<Credit> {
+    let replies = replies(ev, typed, params, v7);
     let mut left: Vec<f64> = replies.iter().map(|r| r.budget).collect();
     let mut next = 0;
     let mut live: Vec<usize> = Vec::new();
@@ -629,11 +700,12 @@ fn reading_credits_v6(ev: &[&Event], spans: &[Span], presence: &[Interval], para
                 let mut at = x;
                 while at < stop {
                     let strong = |i: usize| is_agent(span.class) && span.project.is_some() && replies[i].project == span.project;
+                    let typed_here = |i: usize| replies[i].app.is_some() && replies[i].app == span.app;
                     let Some(i) = live
                         .iter()
                         .copied()
-                        .filter(|&i| left[i] > EPS && project_fits(replies[i].project, span.project, v7))
-                        .min_by_key(|&i| (!strong(i), i))
+                        .filter(|&i| left[i] > EPS && fits(span, replies[i].project, replies[i].app, v7))
+                        .min_by_key(|&i| (!typed_here(i), !strong(i), i))
                     else {
                         break;
                     };

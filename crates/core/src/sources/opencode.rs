@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde_json::{json, Map, Value};
 
 use super::{work, words, Found, Source};
-use crate::event::Kind;
+use crate::event::{App, Kind};
 use crate::{prompt_shape, prompt_stats};
 
 const EDIT_TOOLS: [&str; 4] = ["edit", "write", "multiedit", "patch"];
@@ -133,6 +133,7 @@ struct MsgRow {
     model: Option<String>,
     agent: Option<String>,
     text: Option<String>,
+    app: bool,
 }
 
 struct PartRow {
@@ -252,13 +253,14 @@ impl Schema {
             Schema::Legacy => {
                 "SELECT id, time_created, json_extract(data, '$.role') = 'user', json_extract(data, '$.time.completed'),
                     json_extract(data, '$.finish'), COALESCE(json_type(data, '$.error') = 'object', 0),
-                    json_extract(data, '$.modelID'), json_extract(data, '$.agent'), NULL
+                    json_extract(data, '$.modelID'), json_extract(data, '$.agent'), NULL, 0
                  FROM message WHERE session_id = ?1 AND time_created >= ?2 ORDER BY time_created, id"
             }
             Schema::V2 { .. } => {
                 "SELECT id, time_created, type = 'user', json_extract(data, '$.time.completed'),
                     json_extract(data, '$.finish'), COALESCE(json_type(data, '$.error') = 'object', 0),
-                    json_extract(data, '$.model.id'), json_extract(data, '$.agent'), json_extract(data, '$.text')
+                    json_extract(data, '$.model.id'), json_extract(data, '$.agent'), json_extract(data, '$.text'),
+                    COALESCE(json_type(data, '$.metadata') = 'object', 0)
                  FROM session_message WHERE session_id = ?1 AND type IN ('user', 'assistant') AND time_created >= ?2
                  ORDER BY seq"
             }
@@ -275,6 +277,7 @@ impl Schema {
                 model: r.get(6).ok().flatten(),
                 agent: r.get(7).ok().flatten(),
                 text: r.get(8).ok().flatten(),
+                app: r.get::<_, i64>(9).unwrap_or(0) != 0,
             })
         })?;
         rows.collect()
@@ -321,6 +324,8 @@ impl Schema {
 #[derive(Default)]
 struct Msg {
     user: bool,
+    // Sent from OpenCode's own app (desktop, or `opencode web`): only its composer gives a message `metadata`, the TUI never does.
+    app: bool,
     created: i64,
     text: String,
     completed: Option<i64>,
@@ -350,6 +355,7 @@ fn build(rows: Vec<MsgRow>, parts: Vec<PartRow>) -> Vec<Msg> {
         index.insert(r.id, msgs.len());
         msgs.push(Msg {
             user: r.user,
+            app: r.app,
             created: r.created,
             text: r.text.unwrap_or_default(),
             completed: r.completed,
@@ -496,6 +502,7 @@ impl OpenCode {
                         session: sid.to_string(),
                         shape: Some(prompt_shape(&u.text)),
                         version: version.clone(),
+                        via: (u.app && self.harness == "opencode").then_some(App::OpencodeDesktop),
                     },
                 });
             }
@@ -866,6 +873,22 @@ mod tests {
     #[test]
     fn a_turn_becomes_prompt_start_done_part_rows() {
         turn_flow(Db::rows("rows-turn"));
+    }
+
+    #[test]
+    fn a_prompt_sent_from_the_app_says_so_and_one_from_the_tui_does_not() {
+        let db = Db::new("sent-from-app", true);
+        history(&db);
+        let mut src = OpenCode::new(db.path.clone());
+        src.poll();
+        let meta = json!({ "displayText": "write a hello program", "comments": [], "attachments": [], "agent": "build" });
+        db.msg("s1", "m3", 2_000_000, &json!({ "text": "write a hello program", "metadata": meta, "time": { "created": 2_000_000 } }).to_string());
+        db.user("s1", "m5", 2_100_000, "now add a test for it");
+        let via: Vec<_> = src.poll().into_iter().filter_map(|f| match f.kind {
+            Kind::Prompt { via, .. } => Some(via),
+            _ => None,
+        }).collect();
+        assert_eq!(via, [Some(App::OpencodeDesktop), None]);
     }
 
     #[test]

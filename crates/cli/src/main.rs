@@ -19,7 +19,7 @@ use kairos_core::{analyze, find_session_files, parse_file, Options, Report};
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 
-const USAGE: &str = "usage: kairos analyze [--days N] [--json] [--think-secs S] [DIR...]\n       kairos report [--date YYYY-MM-DD] [--rule v1|v3|v4|v5|v6|v7|v8] [--json [--spans [--tune KEY=VALUE]...]]\n       kairos verify [--date YYYY-MM-DD]\n       kairos install [--no-login] [--keep-wakatime] [--server URL]\n       kairos uninstall\n       kairos wakatime [on|off]\n       kairos hackatime\n       kairos exclude [PATH | --list | --remove PATH]\n       kairos login [--server URL]\n       kairos logout\n       kairos status\n       kairos update [--check]\n       kairos doctor\n       kairos hook\n       kairos hooks print";
+const USAGE: &str = "usage: kairos analyze [--days N] [--json] [--think-secs S] [DIR...]\n       kairos report [--date YYYY-MM-DD] [--rule v1|v3|v4|v5|v6|v7|v8|v9] [--json [--spans [--tune KEY=VALUE]...]]\n       kairos verify [--date YYYY-MM-DD]\n       kairos install [--no-login] [--keep-wakatime] [--server URL]\n       kairos uninstall\n       kairos wakatime [on|off]\n       kairos hackatime\n       kairos exclude [PATH | --list | --remove PATH]\n       kairos login [--server URL]\n       kairos logout\n       kairos status\n       kairos update [--check]\n       kairos doctor\n       kairos hook\n       kairos hooks print";
 
 struct Args {
     opts: Options,

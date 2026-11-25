@@ -320,7 +320,7 @@ mod tests {
         let session = || "s1".to_string();
         let kinds = |file: &Path| {
             vec![
-                Kind::Prompt { words: 12, pasted: false, model: None, session: session(), shape: None, version: None },
+                Kind::Prompt { words: 12, pasted: false, model: None, session: session(), shape: None, version: None, via: None },
                 Kind::AgentStart { session: session() },
                 Kind::ReplyDone { session: session(), reply_words: 40, tools: 2, files_changed: 1, model: None },
                 Kind::AgentEdit { session: session(), path: file.to_string_lossy().into_owned(), added: 3, removed: 1 },

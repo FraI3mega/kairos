@@ -90,6 +90,7 @@ impl Snapshots {
                         session: session.to_string(),
                         shape: t.shape.clone(),
                         version: None,
+                        via: None,
                     },
                 ));
             }

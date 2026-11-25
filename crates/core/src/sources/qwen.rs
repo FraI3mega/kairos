@@ -174,6 +174,7 @@ fn feed(t: &mut Turn, e: &Value, out: &mut Vec<Found>) {
                     session: t.session.clone(),
                     shape: Some(prompt_shape(&prompt)),
                     version: None,
+                    via: None,
                 },
             });
         }

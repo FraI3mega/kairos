@@ -129,7 +129,7 @@ fn model(events: &[Event], rule: Rule) -> Model<'_> {
     let focus: Vec<(f64, Class, Option<&str>)> = ev
         .iter()
         .filter_map(|e| match &e.kind {
-            Kind::Focus { class } => Some((e.ts, *class, e.project.as_deref())),
+            Kind::Focus { class, .. } => Some((e.ts, *class, e.project.as_deref())),
             _ => None,
         })
         .collect();

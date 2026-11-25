@@ -382,7 +382,7 @@ fn feed(c: &mut Conv, e: &Value, out: &mut Vec<Found>) {
         out.push(Found {
             ts,
             cwd: c.cwd.clone(),
-            kind: Kind::Prompt { words, pasted, model: c.model.clone(), session: c.id.clone(), shape, version: version(&c.root) },
+            kind: Kind::Prompt { words, pasted, model: c.model.clone(), session: c.id.clone(), shape, version: version(&c.root), via: None },
         });
         return;
     }

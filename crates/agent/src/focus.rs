@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use kairos_core::event::{Class, Event, Kind};
+use kairos_core::event::{App, Class, Event, Kind};
 
 use crate::browser::BrowserState;
-use crate::classify::{is_opencode_desktop, runs_children};
+use crate::classify::{agent_app, is_opencode_desktop, runs_children};
 use crate::exclusions::Excluded;
 use crate::platform::{self, Foreground};
 use crate::watch::Watch;
@@ -23,7 +23,7 @@ pub fn spawn(reports: Receiver<Option<Foreground>>, events: Sender<Msg>, watch: 
 
 fn run(reports: &Receiver<Option<Foreground>>, events: &Sender<Msg>, watch: &Sender<Watch>, browser: &BrowserState, excluded: &Excluded) {
     let mut current: Option<Foreground> = None;
-    let mut last: Option<(Class, Option<String>)> = None;
+    let mut last: Option<(Class, Option<String>, Option<App>)> = None;
     let mut recheck = RECHECK;
     loop {
         match reports.recv_timeout(recheck) {
@@ -38,7 +38,7 @@ fn run(reports: &Receiver<Option<Foreground>>, events: &Sender<Msg>, watch: &Sen
         }
         recheck = RECHECK;
         let state = match &current {
-            None => (Class::Other, None),
+            None => (Class::Other, None, None),
             Some(fg) => {
                 let c = platform::classify(fg, &excluded.current());
                 if runs_children(&c.app, &fg.wclass) || is_opencode_desktop(&c.app, &fg.wclass) {
@@ -50,13 +50,14 @@ fn run(reports: &Receiver<Option<Foreground>>, events: &Sender<Msg>, watch: &Sen
                     }
                 }
                 match (c.class, browser.current(&c.app)) {
-                    (Class::BrowserUnknown, Some(tab)) => (tab.class, tab.project),
-                    (class, _) => (class, c.project.map(|p| p.id)),
+                    (Class::BrowserUnknown, Some(tab)) => (tab.class, tab.project, None),
+                    (Class::AgentApp, _) => (Class::AgentApp, c.project.map(|p| p.id), agent_app(&c.app, &fg.wclass)),
+                    (class, _) => (class, c.project.map(|p| p.id), None),
                 }
             }
         };
         if last.as_ref() != Some(&state) {
-            let e = Event::new(now(), state.1.clone(), Kind::Focus { class: state.0 });
+            let e = Event::new(now(), state.1.clone(), Kind::Focus { class: state.0, app: state.2 });
             if events.send(Msg::Event(e)).is_err() {
                 return;
             }

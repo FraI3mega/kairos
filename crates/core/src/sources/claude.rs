@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::claude_history::History;
 use super::t3code::T3Code;
 use super::{string_words, work, words, Found, Source, Tail};
-use crate::event::{Ask, Kind};
+use crate::event::{App, Ask, Kind};
 use crate::parse::{timestamp, unwrap_pastes, user_line, UserLine};
 use crate::{prompt_shape, prompt_stats};
 
@@ -337,7 +337,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
             out.push(Found {
                 ts,
                 cwd: turn.start(),
-                kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e) },
+                kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e), via: typed_in_desktop(e, "/origin/kind") },
             });
             return;
         }
@@ -355,7 +355,7 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
             out.push(Found {
                 ts,
                 cwd: turn.start(),
-                kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e) },
+                kind: Kind::Prompt { words, pasted, model: None, session, shape, version: version(e), via: typed_in_desktop(e, "/attachment/origin/kind") },
             });
         }
         return;
@@ -424,6 +424,12 @@ fn feed(turn: &mut Turn, e: &Value, t3: &mut T3Code, out: &mut Vec<Found>) {
 // A prompt typed while the agent was still running gets folded into the running turn.
 fn version(e: &Value) -> Option<String> {
     e.get("version").and_then(Value::as_str).map(str::to_string)
+}
+
+// Claude desktop names itself in `entrypoint` (`-3p` when it runs on a gateway) and marks what a person typed with origin "human".
+fn typed_in_desktop(e: &Value, origin: &str) -> Option<App> {
+    let desktop = matches!(e.get("entrypoint").and_then(Value::as_str), Some("claude-desktop" | "claude-desktop-3p"));
+    (desktop && e.pointer(origin).and_then(Value::as_str) == Some("human")).then_some(App::ClaudeDesktop)
 }
 
 fn queued_prompt(e: &Value) -> Option<&str> {
@@ -646,6 +652,23 @@ mod tests {
         assert!(run(&[&compact, TOOL, RES, DONE]).is_empty());
         let side = P.replace(r#""type":"user","#, r#""type":"user","isSidechain":true,"#);
         assert!(run(&[&side]).is_empty());
+    }
+
+    #[test]
+    fn a_prompt_a_person_typed_in_claude_desktop_says_so() {
+        let via = |l: &str| match &run(&[l])[0].kind {
+            Kind::Prompt { via, .. } => *via,
+            k => panic!("{k:?}"),
+        };
+        let line = |ep: &str, origin: &str| P.replace(r#""type":"user","#, &format!(r#""type":"user","entrypoint":"{ep}",{origin}"#));
+        let human = r#""origin":{"kind":"human"},"#;
+        assert_eq!(via(&line("claude-desktop", human)), Some(App::ClaudeDesktop));
+        assert_eq!(via(&line("claude-desktop-3p", human)), Some(App::ClaudeDesktop));
+        assert_eq!(via(&line("claude-desktop", "")), None, "no origin, no say");
+        assert_eq!(via(&line("claude-desktop", r#""origin":{"kind":"peer"},"#)), None);
+        assert_eq!(via(&line("cli", human)), None);
+        let queued = r#"{"type":"attachment","entrypoint":"claude-desktop","sessionId":"s1","timestamp":"2026-11-19T10:00:07Z","attachment":{"type":"queued_command","prompt":"also update the docs please","commandMode":"prompt","origin":{"kind":"human"}}}"#;
+        assert_eq!(via(queued), Some(App::ClaudeDesktop));
     }
 
     #[test]

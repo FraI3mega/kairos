@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use kairos_core::credit::{agent_runtime, credit_v6_with, credit_v7_with, credit_v8_with, total_credit_secs, unattributed_ai_secs, CreditClass, Rule, V6Params};
+use kairos_core::credit::{agent_runtime, credit_v6_with, credit_v7_with, credit_v8_with, credit_v9_with, total_credit_secs, unattributed_ai_secs, CreditClass, Rule, V6Params};
 use kairos_core::event::{load_events, log_files, verify_chain, Event, GENESIS};
 use kairos_core::{paths, total_secs};
 use anyhow::{bail, Context, Result};
@@ -60,11 +60,11 @@ fn parse(args: &[String], allow_json: bool) -> Result<Opts> {
                 let v = inline.or_else(|| it.next().cloned()).context("--date needs a value")?;
                 o.date = Some(NaiveDate::parse_from_str(&v, "%Y-%m-%d").context("--date must be YYYY-MM-DD")?);
             }
-            other => bail!("unknown argument {other:?}\nusage: kairos report [--date YYYY-MM-DD] [--rule v1|v3|v4|v5|v6|v7|v8] [--json [--spans [--tune KEY=VALUE]...]] | kairos verify [--date YYYY-MM-DD]"),
+            other => bail!("unknown argument {other:?}\nusage: kairos report [--date YYYY-MM-DD] [--rule v1|v3|v4|v5|v6|v7|v8|v9] [--json [--spans [--tune KEY=VALUE]...]] | kairos verify [--date YYYY-MM-DD]"),
         }
     }
-    if tuned && !(o.spans && matches!(o.rule, Rule::V6 | Rule::V7 | Rule::V8)) {
-        bail!("--tune needs --spans and the v6, v7 or v8 rule");
+    if tuned && !(o.spans && matches!(o.rule, Rule::V6 | Rule::V7 | Rule::V8 | Rule::V9)) {
+        bail!("--tune needs --spans and the v6, v7, v8 or v9 rule");
     }
     Ok(o)
 }
@@ -182,6 +182,7 @@ fn print_spans(o: &Opts) -> Result<()> {
         Rule::V6 => credit_v6_with(&events, &o.tune),
         Rule::V7 => credit_v7_with(&events, &o.tune),
         Rule::V8 => credit_v8_with(&events, &o.tune),
+        Rule::V9 => credit_v9_with(&events, &o.tune),
         rule => rule.apply(&events),
     };
     println!("{}", serde_json::to_string(&credits)?);

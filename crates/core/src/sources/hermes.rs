@@ -222,6 +222,7 @@ fn prompt(t: &mut Turn, r: &Row, out: &mut Vec<Found>) {
             session: r.session.clone(),
             shape: Some(prompt_shape(&text)),
             version: None,
+            via: None,
         },
     });
 }

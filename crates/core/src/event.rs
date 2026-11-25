@@ -70,6 +70,17 @@ pub enum Via {
     Unknown,
 }
 
+/// An agent app whose own log can say a prompt was typed in it. Only these names ever leave the computer, never a window's title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum App {
+    ClaudeDesktop,
+    CodexApp,
+    OpencodeDesktop,
+    #[serde(other)]
+    Unknown,
+}
+
 /// What the agent was waiting on when it asked the person something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +114,9 @@ pub enum Kind {
         /// The harness's own version, where its logs say.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        /// The agent app the harness's log says the person typed this in.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<App>,
     },
     AgentStart {
         session: String,
@@ -128,6 +142,8 @@ pub enum Kind {
     },
     Focus {
         class: Class,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        app: Option<App>,
     },
     /// `input` is 15 hex digits of a u64 whose bit i is set when there was input in the second [ts - 60 + i, ts - 59 + i). Absent when the backend can't tell.
     Present {

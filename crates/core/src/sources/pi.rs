@@ -188,6 +188,7 @@ fn prompt(t: &mut Turn, m: &Value, ts: f64, out: &mut Vec<Found>) {
             session: t.session.clone(),
             shape: Some(prompt_shape(&text)),
             version: None,
+            via: None,
         },
     });
 }

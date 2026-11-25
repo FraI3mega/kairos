@@ -48,7 +48,7 @@ impl Tape {
     }
 
     pub fn focus(&mut self, ts: f64, class: Class, project: Option<&str>) {
-        self.at(ts, project, Kind::Focus { class });
+        self.at(ts, project, Kind::Focus { class, app: None });
     }
 
     pub fn touch(&mut self, a: f64, b: f64) {
@@ -62,7 +62,7 @@ impl Tape {
             ts: ms(ts),
             project: Some(project.into()),
             harness: Some(harness.into()),
-            kind: Kind::Prompt { words, pasted, model: Some("sim-model".into()), session: session.into(), shape: None, version: None },
+            kind: Kind::Prompt { words, pasted, model: Some("sim-model".into()), session: session.into(), shape: None, version: None, via: None },
         });
     }
 
@@ -204,7 +204,7 @@ mod tests {
         let ev = t.finish();
         assert!(ev.iter().all(|e| !(e.ts > 300.0 && e.ts < 600.0)), "{:?}", ev.iter().map(|e| e.ts).collect::<Vec<_>>());
         let at_end = ev.iter().find(|e| e.ts == 600.0).expect("held focus written at the end of the pause");
-        assert!(matches!(at_end.kind, Kind::Focus { class: Class::Terminal }));
+        assert!(matches!(at_end.kind, Kind::Focus { class: Class::Terminal, .. }));
         assert!(ev.iter().any(|e| e.ts == 300.0 && matches!(e.kind, Kind::Pause { until } if until == 600.0)));
     }
 

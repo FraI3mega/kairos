@@ -102,7 +102,7 @@ fn row<'a>(rows: &'a [Stored], c: char) -> &'a Stored {
 }
 
 fn start(chain: &mut Chain) -> Vec<Value> {
-    chain.push(D + H, None, Kind::Focus { class: Class::Editor });
+    chain.push(D + H, None, Kind::Focus { class: Class::Editor, app: None });
     chain.take()
 }
 
@@ -285,7 +285,7 @@ async fn the_commit_dates_signal_needs_a_local_commit_dated_away_while_recording
 
     let desktop = ada.pair("ada-desktop").await;
     let mut events = Chain::default();
-    events.push(D + 12.0 * H, None, Kind::Focus { class: Class::Editor });
+    events.push(D + 12.0 * H, None, Kind::Focus { class: Class::Editor, app: None });
     let mut events = events.take();
     raw_commit(&mut events, D + 12.0 * H + 5.0, &sha('3'), json!({ "via": "commit", "committed": D as i64 - 5 * 86_400 }));
     assert_eq!(upload(&app, &desktop, events).await.status, StatusCode::OK);
@@ -377,7 +377,7 @@ async fn the_review_page_shows_what_agent_edits_wrote_into_each_commit() {
     let t = D + 10.0 * H;
 
     let mut chain = Chain::default();
-    chain.push(t - 900.0, Some("ada/site"), Kind::Focus { class: Class::Editor });
+    chain.push(t - 900.0, Some("ada/site"), Kind::Focus { class: Class::Editor, app: None });
     edit(&mut chain, t - 600.0, "ada/site", "claude-code", "src/main.rs", 12, 3);
     edit(&mut chain, t - 500.0, "ada/site", "codex", "src/lib.rs", 4, 0);
     edit(&mut chain, t - 450.0, "ada/other", "codex", "src/main.rs", 50, 50);

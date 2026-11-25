@@ -318,7 +318,7 @@ async fn ingest_rejects_broken_chains_and_bad_times() {
 
     let mut future = Chain::default();
     let later = kairos_server::util::now() + 86_400.0;
-    future.push(later, Some("acme/app"), Kind::Focus { class: Class::Editor });
+    future.push(later, Some("acme/app"), Kind::Focus { class: Class::Editor, app: None });
     let res = upload(&app, &token, future.take()).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(res.json()["error"], "bad_ts");
@@ -480,7 +480,7 @@ async fn a_device_reaches_far_behind_what_it_already_sent_only_a_few_times() {
     let uid = user_id(&app, "ada").await;
     let events = "SELECT count(*) FROM events e JOIN devices d ON d.id = e.device_id WHERE d.user_id = $1";
     let now = kairos_server::util::now();
-    let focus = || Kind::Focus { class: Class::Editor };
+    let focus = || Kind::Focus { class: Class::Editor, app: None };
 
     let mut chain = Chain::default();
     chain.editing("acme/app", now - 600.0, now - 300.0);

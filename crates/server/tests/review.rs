@@ -39,7 +39,7 @@ async fn seed(app: &TestApp) -> Browser<'_> {
     c.editing("ada/site", local(0.0, 10.0, 0.0), local(0.0, 11.0, 0.0));
     c.push(local(0.0, 11.0, 5.0), Some("ada/site"), Kind::Commit { sha: SHA.into(), files: 3, added: 40, removed: 2, authored: None, committed: None, via: None, changes: vec![], replaces: None });
     c.editing("ada/other", local(0.0, 14.0, 0.0), local(0.0, 14.0, 30.0));
-    c.push(local(0.0, 16.0, 0.0), None, Kind::Focus { class: Class::Editor });
+    c.push(local(0.0, 16.0, 0.0), None, Kind::Focus { class: Class::Editor, app: None });
     for i in 1..=10 {
         c.push(local(0.0, 16.0, i as f64), None, Kind::Present { input: None });
     }

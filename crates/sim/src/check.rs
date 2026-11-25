@@ -407,7 +407,7 @@ async fn protocol_checks(http: Arc<Http>, idx: usize, o: &Opts, out: &mut Outcom
         let mut prev = anchor.to_string();
         (0..n)
             .map(|i| {
-                let mut e = Event::new(t0 + i as f64, Some("sim/protocol".into()), Kind::Focus { class: Class::Editor });
+                let mut e = Event::new(t0 + i as f64, Some("sim/protocol".into()), Kind::Focus { class: Class::Editor, app: None });
                 e.seal(&prev);
                 prev = e.hash.clone();
                 serde_json::to_value(&e).unwrap()

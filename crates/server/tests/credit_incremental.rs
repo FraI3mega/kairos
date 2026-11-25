@@ -335,19 +335,19 @@ fn incremental_equals_full_for_a_long_turn_and_a_long_pause_uploaded_as_they_hap
     let p = Some("ada/site");
     let mut batches = vec![
         vec![
-            at(t0, p, Kind::Focus { class: Class::AgentTerminal }),
-            at(t0 + 10.0, p, Kind::Prompt { words: 12, pasted: false, model: None, session: "s1".into(), shape: None, version: None }),
+            at(t0, p, Kind::Focus { class: Class::AgentTerminal, app: None }),
+            at(t0 + 10.0, p, Kind::Prompt { words: 12, pasted: false, model: None, session: "s1".into(), shape: None, version: None, via: None }),
             at(t0 + 20.0, p, Kind::AgentStart { session: "s1".into() }),
         ],
-        vec![at(t0 + 2.0 * h, p, Kind::Focus { class: Class::Editor })],
+        vec![at(t0 + 2.0 * h, p, Kind::Focus { class: Class::Editor, app: None })],
         vec![at(t0 + 3.0 * h, p, Kind::ReplyDone { session: "s1".into(), reply_words: 40, tools: 3, files_changed: 1, model: None })],
         vec![
             at(t0 + 4.0 * h, None, Kind::Pause { until: t0 + 16.0 * h }),
             at(t0 + 4.0 * h + 60.0, None, Kind::Pause { until: t0 + 4.0 * h + 360.0 }),
             at(t0 + 4.0 * h + 120.0, None, Kind::Pause { until: t0 + 4.0 * h + 420.0 }),
         ],
-        vec![at(t0 + 10.0 * h, p, Kind::Focus { class: Class::Terminal })],
-        vec![at(t0 + 17.0 * h, p, Kind::Focus { class: Class::Terminal })],
+        vec![at(t0 + 10.0 * h, p, Kind::Focus { class: Class::Terminal, app: None })],
+        vec![at(t0 + 17.0 * h, p, Kind::Focus { class: Class::Terminal, app: None })],
     ];
     for b in batches.iter_mut() {
         let from = b[0].ts;
@@ -382,7 +382,7 @@ fn incremental_equals_full_when_the_focus_before_the_context_shares_its_timestam
     let h = 3600.0;
     let t0 = BASE + h;
     let p = Some("ada/api".to_string());
-    let focus = |class: Class, project: Option<String>| Event::new(t0, project, Kind::Focus { class });
+    let focus = |class: Class, project: Option<String>| Event::new(t0, project, Kind::Focus { class, app: None });
     let presents = |from: f64| (1..=10).map(move |i| Event::new(from + 60.0 * f64::from(i), None, Kind::Present { input: None })).collect::<Vec<_>>();
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
     let app = rt.block_on(TestApp::new());

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use kairos_core::event::Class;
+use kairos_core::event::{App, Class};
 use kairos_core::exclude::Exclusions;
 use kairos_core::project::{own_folder, project_of, Project};
 use kairos_core::sources::{opencode, t3code};
@@ -95,6 +95,23 @@ const OPENCODE_DESKTOP: &[&str] = &["opencode", "ai.opencode"];
 
 pub fn is_opencode_desktop(name: &str, wclass: &str) -> bool {
     is_one_of(OPENCODE_DESKTOP, name) || is_one_of(OPENCODE_DESKTOP, &wclass.to_lowercase())
+}
+
+const CLAUDE_DESKTOP: &[&str] = &["claude-desktop", "com.anthropic.claude", "com.anthropic.claudefordesktop"];
+const CODEX_APP: &[&str] = &["codex", "com.openai.codex"];
+
+/// Which agent app an `agent_app` window belongs to, for the ones whose logs say a prompt was typed in them.
+pub fn agent_app(name: &str, wclass: &str) -> Option<App> {
+    let wclass = wclass.to_lowercase();
+    if is_one_of(CLAUDE_DESKTOP, name) || is_one_of(CLAUDE_DESKTOP, &wclass) || name == "claude" || wclass == "claude" {
+        Some(App::ClaudeDesktop)
+    } else if is_one_of(CODEX_APP, name) || is_one_of(CODEX_APP, &wclass) {
+        Some(App::CodexApp)
+    } else if is_opencode_desktop(name, &wclass) {
+        Some(App::OpencodeDesktop)
+    } else {
+        None
+    }
 }
 
 fn is_agent_app(name: &str, wclass: &str) -> bool {
@@ -933,5 +950,24 @@ mod tests {
         assert_eq!(result(&shell(&a.join("secret")), &inside), nowhere, "a folder in a repo");
         assert_eq!(result(&shell(&a), &inside), (Class::Terminal, Some(a.clone())), "the rest of the repo");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn agent_app_windows_say_which_app() {
+        let cases = [
+            ("claude", "com.anthropic.claudefordesktop", Some(App::ClaudeDesktop)),
+            ("claude", "", Some(App::ClaudeDesktop)),
+            ("claude-desktop", "Claude", Some(App::ClaudeDesktop)),
+            ("chatgpt", "com.openai.codex", Some(App::CodexApp)),
+            ("codex", "", Some(App::CodexApp)),
+            ("chatgpt", "com.openai.chat", None),
+            ("ai.opencode", "ai.opencode.desktop", Some(App::OpencodeDesktop)),
+            ("opencode", "", Some(App::OpencodeDesktop)),
+            ("t3code", "com.t3tools.t3code", None),
+            ("antigravity", "", None),
+        ];
+        for (name, wclass, app) in cases {
+            assert_eq!(agent_app(name, wclass), app, "{name} {wclass}");
+        }
     }
 }

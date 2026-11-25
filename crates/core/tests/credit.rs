@@ -1,9 +1,10 @@
 use kairos_core::credit::{
     agent_runtime, agent_turns, credit_v1, credit_v3, credit_v4, credit_v5, credit_v6, credit_v6_with, credit_v7, credit_v7_with, credit_v8, credit_v8_with,
+    credit_v9, credit_v9_with,
     total_credit_secs,
     unattributed_ai_secs, Credit, CreditClass, Rule, V6Params, PAUSE_MAX_SECS, REVISION, TURN_MAX_SECS,
 };
-use kairos_core::event::{input_bits, verify_chain, Ask, Class, Event, Kind, GENESIS};
+use kairos_core::event::{input_bits, verify_chain, App, Ask, Class, Event, Kind, GENESIS};
 use kairos_core::project::{normalize_remote, origin_url};
 use kairos_core::{human_credits, last_turn, prompt_stats, total_secs, Turn};
 use serde_json::json;
@@ -13,7 +14,7 @@ fn ev(ts: f64, project: Option<&str>, kind: Kind) -> Event {
 }
 
 fn focus(ts: f64, class: Class, project: Option<&str>) -> Event {
-    ev(ts, project, Kind::Focus { class })
+    ev(ts, project, Kind::Focus { class, app: None })
 }
 
 fn present(ts: f64) -> Event {
@@ -21,7 +22,7 @@ fn present(ts: f64) -> Event {
 }
 
 fn prompt(ts: f64, words: usize, pasted: bool) -> Event {
-    ev(ts, Some("o/r"), Kind::Prompt { words, pasted, model: None, session: "s".into(), shape: None, version: None })
+    ev(ts, Some("o/r"), Kind::Prompt { words, pasted, model: None, session: "s".into(), shape: None, version: None, via: None })
 }
 
 fn reply(ts: f64, reply_words: usize) -> Event {
@@ -366,7 +367,7 @@ fn new_focus_classes_round_trip_and_old_logs_parse() {
     ] {
         let text = serde_json::to_string(&focus(1.0, class, None)).unwrap();
         assert!(text.contains(&format!("\"class\":\"{name}\"")), "{text}");
-        assert_eq!(serde_json::from_str::<Event>(&text).unwrap().kind, Kind::Focus { class });
+        assert_eq!(serde_json::from_str::<Event>(&text).unwrap().kind, Kind::Focus { class, app: None });
     }
     let old = r#"{"v":1,"ts":1.0,"kind":"focus","class":"browser_unknown","prev":"","hash":""}"#;
     assert!(serde_json::from_str::<Event>(old).is_ok());
@@ -414,7 +415,7 @@ fn v4_docs_long_after_project_work_count_as_other() {
 fn v4_chats_outside_projects_count_as_other() {
     let mut events = vec![
         ev(0.0, None, Kind::ReplyDone { session: "h".into(), reply_words: 230, tools: 0, files_changed: 0, model: None }),
-        ev(200.0, None, Kind::Prompt { words: 35, pasted: false, model: None, session: "h".into(), shape: None, version: None }),
+        ev(200.0, None, Kind::Prompt { words: 35, pasted: false, model: None, session: "h".into(), shape: None, version: None, via: None }),
     ];
     events.extend(presents(60.0, 240.0));
     let c = credit_v4(&events);
@@ -481,7 +482,7 @@ fn v5_matches_v4_on_typing_reading_editing_and_terminal() {
         reply(700.0, 230),
         prompt(900.0, 40, false),
         ev(1000.0, None, Kind::ReplyDone { session: "h".into(), reply_words: 230, tools: 0, files_changed: 0, model: None }),
-        ev(1200.0, None, Kind::Prompt { words: 35, pasted: false, model: None, session: "h".into(), shape: None, version: None }),
+        ev(1200.0, None, Kind::Prompt { words: 35, pasted: false, model: None, session: "h".into(), shape: None, version: None, via: None }),
     ];
     events.extend(presents(60.0, 1300.0));
     let c = credit_v5(&events);
@@ -509,7 +510,7 @@ fn unknown_kinds_and_classes_still_parse() {
     let e: Event = serde_json::from_str(r#"{"v":1,"ts":5.0,"kind":"hologram","depth":3,"prev":"","hash":""}"#).unwrap();
     assert_eq!(e.kind, Kind::Unknown);
     let f: Event = serde_json::from_str(r#"{"v":1,"ts":5.0,"kind":"focus","class":"vr_headset","prev":"","hash":""}"#).unwrap();
-    assert_eq!(f.kind, Kind::Focus { class: Class::Unknown });
+    assert_eq!(f.kind, Kind::Focus { class: Class::Unknown, app: None });
 }
 
 #[test]
@@ -520,7 +521,7 @@ fn v4_two_agents_in_two_projects_at_once_are_credited_once_each() {
         e
     };
     let prompt =
-        |session: &str| Kind::Prompt { words: 35, pasted: false, model: None, session: session.into(), shape: None, version: None };
+        |session: &str| Kind::Prompt { words: 35, pasted: false, model: None, session: session.into(), shape: None, version: None, via: None };
     let start = |session: &str| Kind::AgentStart { session: session.into() };
     let done = |session: &str| Kind::ReplyDone {
         session: session.into(),
@@ -655,11 +656,19 @@ fn pinned_v8_events() -> Vec<Event> {
     events
 }
 
+// pinned_v8_events plus what only v9 reads: a prompt typed in an agent app whose window shows no project.
+fn pinned_v9_events() -> Vec<Event> {
+    let mut events = pinned_v8_events();
+    events.extend(in_the_codex_app(6000.0, App::CodexApp, None, 100));
+    events.sort_by(|a, b| a.ts.total_cmp(&b.ts));
+    events
+}
+
 #[test]
 fn stored_credit_is_pinned_to_the_revision() {
-    let events = pinned_v8_events();
+    let events = pinned_v9_events();
     let out = format!("{:?}{:?}", Rule::CURRENT.apply(&events), agent_turns(&events));
-    assert_eq!((REVISION, blake3::hash(out.as_bytes()).to_hex().to_string()), (7, "1f927eabbcdca3d98b07522b7c30f5bfeda317d6b9d971113b8933f10cbc2033".to_string()), "{out}");
+    assert_eq!((REVISION, blake3::hash(out.as_bytes()).to_hex().to_string()), (8, "07cf41417da66853b139b0cbfd098f7d8307fe141d76ef77314e2774c30eaafa".to_string()), "{out}");
 }
 
 fn secs_in(credits: &[Credit], class: CreditClass, lo: f64, hi: f64) -> f64 {
@@ -675,7 +684,7 @@ fn reply_of(ts: f64, session: &str, project: Option<&str>, reply_words: usize) -
 }
 
 #[test]
-fn v8_is_the_live_rule() {
+fn v9_is_the_live_rule() {
     assert_eq!(Rule::parse("v6"), Some(Rule::V6));
     assert_eq!(Rule::parse("credit_v6"), Some(Rule::V6));
     assert_eq!(Rule::V6.name(), "credit_v6");
@@ -683,7 +692,9 @@ fn v8_is_the_live_rule() {
     assert_eq!(Rule::V7.name(), "credit_v7");
     assert_eq!(Rule::parse("v8"), Some(Rule::V8));
     assert_eq!(Rule::V8.name(), "credit_v8");
-    assert_eq!(Rule::CURRENT, Rule::V8);
+    assert_eq!(Rule::parse("v9"), Some(Rule::V9));
+    assert_eq!(Rule::V9.name(), "credit_v9");
+    assert_eq!(Rule::CURRENT, Rule::V9);
     let events = vec![focus(0.0, Class::Editor, Some("o/r")), present(60.0), present(120.0)];
     assert_eq!(Rule::V6.apply(&events), credit_v6(&events));
     assert_eq!(credit_v6_with(&events, &V6Params::default()), credit_v6(&events));
@@ -691,6 +702,64 @@ fn v8_is_the_live_rule() {
     assert_eq!(credit_v7_with(&events, &V6Params::default()), credit_v7(&events));
     assert_eq!(Rule::V8.apply(&events), credit_v8(&events));
     assert_eq!(credit_v8_with(&events, &V6Params::default()), credit_v8(&events));
+    assert_eq!(Rule::V9.apply(&events), credit_v9(&events));
+    assert_eq!(credit_v9_with(&events, &V6Params::default()), credit_v9(&events));
+}
+
+// An agent app window in front from `t0` showing `shows`, the person's input every second for `typing` seconds, then a
+// 35 word prompt for o/r its log says was typed in the Codex app, and a 230 word reply 100 s later read in the window.
+fn in_the_codex_app(t0: f64, front: App, shows: Option<&str>, typing: u32) -> Vec<Event> {
+    let mut events = vec![ev(t0, shows, Kind::Focus { class: Class::AgentApp, app: Some(front) })];
+    let inputs = active(t0, typing);
+    events.extend((1..=10).map(|m| t0 + 60.0 * f64::from(m)).map(|t| present_with(t, &input_bits(t, &inputs))));
+    events.push(ev(t0 + 100.0, Some("o/r"), Kind::Prompt { words: 35, pasted: false, model: None, session: "app".into(), shape: None, version: None, via: Some(App::CodexApp) }));
+    events.push(reply_of(t0 + 200.0, "app", Some("o/r"), 230));
+    events
+}
+
+#[test]
+fn v9_a_prompt_typed_in_an_agent_app_fits_its_window_whatever_project_it_shows() {
+    for shows in [None, Some("x/y")] {
+        let events = in_the_codex_app(0.0, App::CodexApp, shows, 100);
+        let (v8, v9) = (credit_v8(&events), credit_v9(&events));
+        assert_eq!((secs_by(&v8, CreditClass::Typing, Some("o/r")), secs_by(&v8, CreditClass::Reading, Some("o/r"))), (0.0, 0.0), "{shows:?}");
+        assert_eq!(secs_by(&v9, CreditClass::Typing, Some("o/r")), 60.0, "{shows:?}: 35 words at 35 wpm");
+        assert_eq!(secs_by(&v9, CreditClass::Reading, Some("o/r")), 180.0, "{shows:?}: 230 words at 230 wpm and 120 s to think");
+    }
+}
+
+#[test]
+fn v9_needs_the_app_the_log_names_in_front_with_input_just_before_the_prompt() {
+    let nothing = |events: &[Event]| {
+        let c = credit_v9(events);
+        (secs_by(&c, CreditClass::Typing, Some("o/r")), secs_by(&c, CreditClass::Reading, Some("o/r")))
+    };
+    assert_eq!(nothing(&in_the_codex_app(0.0, App::ClaudeDesktop, None, 100)), (0.0, 0.0), "another app in front");
+    assert_eq!(nothing(&in_the_codex_app(0.0, App::CodexApp, None, 90)), (0.0, 0.0), "no input in the 5 s before: sent from elsewhere");
+    let mut terminal = in_the_codex_app(0.0, App::CodexApp, None, 100);
+    terminal[0] = focus(0.0, Class::Terminal, None);
+    assert_eq!(nothing(&terminal), (0.0, 0.0), "not an agent app window");
+}
+
+#[test]
+fn v9_is_v8_when_no_prompt_says_where_it_was_typed() {
+    let mut events = pinned_v8_events();
+    let mut app = in_the_codex_app(6000.0, App::CodexApp, None, 100);
+    if let Kind::Prompt { via, .. } = &mut app[11].kind {
+        *via = None;
+    }
+    events.extend(app);
+    events.sort_by(|a, b| a.ts.total_cmp(&b.ts));
+    assert_eq!(credit_v9(&events), credit_v8(&events));
+}
+
+#[test]
+fn v9_an_answer_in_a_session_typed_in_the_app_fits_its_window() {
+    let mut events = in_the_codex_app(0.0, App::CodexApp, None, 100);
+    events.push(ev(530.0, Some("o/r"), Kind::Answered { session: "app".into(), asked: 500.0, why: Ask::Question, shown_words: 46, answer_words: 0 }));
+    let answer = |c: &[Credit]| secs_in(c, CreditClass::Reading, 500.0, 530.0);
+    assert_eq!(answer(&credit_v8(&events)), 0.0);
+    assert_eq!(answer(&credit_v9(&events)), 30.0);
 }
 
 #[test]
@@ -1094,7 +1163,7 @@ fn v6_saves_during_turns_of_harnesses_without_agent_edits_are_not_evidence_but_h
             ev(
                 150.0,
                 Some("o/r"),
-                Kind::Prompt { words: 2, pasted: false, model: None, session: "c".into(), shape: None, version: None },
+                Kind::Prompt { words: 2, pasted: false, model: None, session: "c".into(), shape: None, version: None, via: None },
             ),
             "cursor",
         ),
@@ -1193,7 +1262,7 @@ fn v8_while_an_agent_that_saves_through_the_editor_runs_its_saves_need_typed_lin
     }
     let mut elsewhere = editor_day(agent_turn("claude-code", 100.0, Some(500.0)));
     elsewhere.extend([
-        by(ev(100.0, Some("x/y"), Kind::Prompt { words: 2, pasted: false, model: None, session: "c".into(), shape: None, version: None }), "cursor"),
+        by(ev(100.0, Some("x/y"), Kind::Prompt { words: 2, pasted: false, model: None, session: "c".into(), shape: None, version: None, via: None }), "cursor"),
         by(reply_of(500.0, "c", Some("x/y"), 10), "cursor"),
         editor_save(300.0, Some("src/a.rs"), Some(0), None),
     ]);
@@ -1272,7 +1341,7 @@ fn v7_a_turn_with_no_project_gates_only_editor_time_with_none() {
 fn v7_a_window_with_no_project_spends_no_projects_budget() {
     // eval/replay/repro/projectless-window: a reply in o/p and then the Claude app, which has no project, in front.
     let ask =
-        ev(-5.0, Some("o/p"), Kind::Prompt { words: 20, pasted: false, model: None, session: "s1".into(), shape: None, version: None });
+        ev(-5.0, Some("o/p"), Kind::Prompt { words: 20, pasted: false, model: None, session: "s1".into(), shape: None, version: None, via: None });
     let mut events = vec![ask, reply_of(0.0, "s1", Some("o/p"), 460), focus(1.0, Class::AgentApp, None)];
     events.extend(presents(60.0, 300.0));
     assert_eq!(secs_by(&credit_v6(&events), CreditClass::Reading, Some("o/p")), 240.0);

@@ -185,6 +185,7 @@ fn feed(s: &mut Sess, e: &Value, out: &mut Vec<Found>) {
                     session: s.session.clone(),
                     shape: Some(prompt_shape(text)),
                     version: None,
+                    via: None,
                 },
             });
         }

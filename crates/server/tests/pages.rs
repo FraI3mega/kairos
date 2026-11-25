@@ -132,7 +132,7 @@ async fn june(app: &TestApp, ada: &mut Browser<'_>) {
     c.push(at + 505.0, Some("ada/site"), commit(&"3".repeat(40), Some(Via::Commit), None, files(&[("src/main.rs", 2, 2)])));
     c.editing("ada/other", local(0.0, 14.0, 0.0), local(0.0, 14.0, 30.0));
     agent_run(&mut c, local(0.0, 14.0, 40.0), local(0.0, 14.0, 55.0), "ada/other", "codex");
-    c.push(local(0.0, 16.0, 0.0), None, Kind::Focus { class: Class::Editor });
+    c.push(local(0.0, 16.0, 0.0), None, Kind::Focus { class: Class::Editor, app: None });
     for i in 1..=10 {
         c.push(local(0.0, 16.0, i as f64), None, Kind::Present { input: None });
     }
@@ -177,7 +177,7 @@ async fn recent(app: &TestApp, ada: &mut Browser<'_>) {
                 c.editing("scratch", day(ago, 17.0), day(ago, 17.5));
                 c.push(day(ago, 17.6), Some("scratch"), commit(&"6".repeat(40), Some(Via::Commit), Some(day(ago, 17.6) as i64), files(&[("a.txt", 3, 0), ("b.txt", 1, 1)])));
                 c.push(day(ago, 17.7), Some("scratch"), commit(&"7".repeat(40), Some(Via::Commit), Some(day(ago, 17.7) as i64), files(&[("a.txt", 1, 0)])));
-                c.push(day(ago, 18.0), None, Kind::Focus { class: Class::Editor });
+                c.push(day(ago, 18.0), None, Kind::Focus { class: Class::Editor, app: None });
                 for i in 1..=10 {
                     c.push(day(ago, 18.0) + 60.0 * i as f64, None, Kind::Present { input: None });
                 }

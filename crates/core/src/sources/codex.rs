@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::{string_words, uri_path, work, words, Found, Source, Tail};
-use crate::event::{Ask, Kind};
+use crate::event::{App, Ask, Kind};
 use crate::parse::timestamp;
 use crate::{prompt_shape, prompt_stats};
 
@@ -39,6 +39,10 @@ struct Turn {
     cwd: Option<PathBuf>,
     model: Option<String>,
     version: Option<String>,
+    // The Codex app's own sessions, and whether the turn running was started from its composer (it also starts turns
+    // for automations, reviews and reconnects, which say so).
+    desktop: bool,
+    composer: bool,
     armed: bool,
     open: bool,
     last_ts: f64,
@@ -80,6 +84,7 @@ impl Turn {
         if let Some(v) = p.get("cli_version").and_then(Value::as_str) {
             self.version = Some(v.to_string());
         }
+        self.desktop = p.get("originator").and_then(Value::as_str) == Some("Codex Desktop");
     }
 
     // Tail skips history on first run, so a session's metadata line may never reach feed().
@@ -143,6 +148,7 @@ impl Turn {
                 session: self.session.clone(),
                 shape: Some(prompt_shape(text)),
                 version: self.version.clone(),
+                via: (self.desktop && self.composer).then_some(App::CodexApp),
             },
         });
     }
@@ -260,6 +266,8 @@ fn feed(t: &mut Turn, e: &Value, out: &mut Vec<Found>) {
         ("event_msg", "task_started") => {
             let last = t.last_ts;
             t.close(last, out);
+            let trigger = p.pointer("/turn_attribution/turn_trigger").and_then(Value::as_str);
+            t.composer = trigger.map_or(true, |k| matches!(k, "composer" | "composer_queue" | "edit_user_message"));
         }
         ("event_msg", "task_complete" | "turn_aborted") => t.close(ts, out),
         ("event_msg", "user_message") if !t.items => {
@@ -411,12 +419,30 @@ mod tests {
     const ABORT: &str = r#"{"timestamp":"2026-11-19T10:00:30Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}"#;
 
     #[test]
+    fn a_prompt_typed_in_the_codex_app_composer_says_so() {
+        let via = |meta: &str, start: &str| {
+            run(&[meta, start, CTX, USER]).into_iter().find_map(|f| match f.kind {
+                Kind::Prompt { via, .. } => Some(via),
+                _ => None,
+            })
+        };
+        let app = META.replace(r#""source":"cli""#, r#""originator":"Codex Desktop","source":"vscode""#);
+        let started = |trigger: &str| START.replace(r#""turn_id":"t1""#, &format!(r#""turn_id":"t1","turn_attribution":{{"turn_trigger":"{trigger}"}}"#));
+        assert_eq!(via(&app, START), Some(Some(App::CodexApp)));
+        assert_eq!(via(&app, &started("composer")), Some(Some(App::CodexApp)));
+        assert_eq!(via(&app, &started("automation_heartbeat_x")), Some(None));
+        assert_eq!(via(META, &started("composer")), Some(None), "the CLI");
+        let vscode = META.replace(r#""source":"cli""#, r#""originator":"codex_vscode","source":"vscode""#);
+        assert_eq!(via(&vscode, START), Some(None));
+    }
+
+    #[test]
     fn a_turn_becomes_prompt_start_done() {
         let out = run(&[META, START, CTX, USER, SAY, TOOL, EDIT, FINAL, DONE]);
         assert_eq!(names(&out), ["prompt", "agent_start", "reply_done"]);
         assert_eq!(out[0].cwd.as_deref(), Some(Path::new("/w/p")));
         match &out[0].kind {
-            Kind::Prompt { words, pasted, model, session, shape, version } => {
+            Kind::Prompt { words, pasted, model, session, shape, version, .. } => {
                 assert_eq!((*words, *pasted, session.as_str(), version.as_deref()), (7, false, "s1", Some("0.167.0")));
                 assert_eq!(shape.as_ref().map(|s| (s.lines, s.sentences)), Some((1, 1)));
                 assert_eq!(*model, None);

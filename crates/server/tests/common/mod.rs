@@ -283,7 +283,7 @@ impl Chain {
     }
 
     pub fn editing(&mut self, project: &str, start: f64, end: f64) {
-        self.push(start, Some(project), Kind::Focus { class: Class::Editor });
+        self.push(start, Some(project), Kind::Focus { class: Class::Editor, app: None });
         let mut t = start + 60.0;
         while t <= end + 1e-9 {
             self.push(t, None, Kind::Present { input: None });
@@ -292,7 +292,7 @@ impl Chain {
     }
 
     pub fn prompt(&mut self, ts: f64, project: Option<&str>, harness: &str) {
-        self.push_from(ts, project, harness, Kind::Prompt { words: 5, pasted: false, model: None, session: "s1".into(), shape: None, version: None });
+        self.push_from(ts, project, harness, Kind::Prompt { words: 5, pasted: false, model: None, session: "s1".into(), shape: None, version: None, via: None });
     }
 
     /// Ends the turn `prompt` started, as the agent's reply does.

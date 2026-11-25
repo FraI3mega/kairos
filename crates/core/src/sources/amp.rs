@@ -120,6 +120,7 @@ fn facts(v: &Value) -> Vec<Found> {
                     session: session.to_string(),
                     shape: Some(prompt_shape(prompt)),
                     version: text("version").map(str::to_string),
+                    via: None,
                 },
             });
         }
@@ -261,7 +262,7 @@ mod tests {
     #[test]
     fn a_prompt_keeps_counts_and_never_text() {
         let out = of(r#""ev":"prompt","text":"fix the parser please\nit drops the last line","version":"0.0.1793857728-g655a2c""#);
-        let [Found { ts, cwd, kind: Kind::Prompt { words, pasted, session, shape, version, model } }] = out.as_slice() else { panic!("{out:?}") };
+        let [Found { ts, cwd, kind: Kind::Prompt { words, pasted, session, shape, version, model, .. } }] = out.as_slice() else { panic!("{out:?}") };
         assert_eq!((*ts, cwd.as_deref()), (1795554335.236, Some(Path::new("/w/probe"))));
         assert_eq!((*words, *pasted, session.as_str(), model), (9, false, THREAD, &None));
         assert_eq!(shape.as_ref().unwrap().lines, 2);

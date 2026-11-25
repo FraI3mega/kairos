@@ -92,7 +92,7 @@ fn pending_pause(dir: &Path) -> Option<f64> {
 fn describe(e: &Event) -> String {
     let mut s = e.kind.name().to_string();
     match &e.kind {
-        Kind::Focus { class } => s.push_str(&format!(" class={}", class.as_str())),
+        Kind::Focus { class, .. } => s.push_str(&format!(" class={}", class.as_str())),
         Kind::FileSave { count, .. } => s.push_str(&format!(" count={count}")),
         Kind::Backends { focus, idle } => s.push_str(&format!(" focus={focus} idle={idle}")),
         Kind::Commit { files, added, removed, .. } | Kind::Diff { files, added, removed, .. } => {
