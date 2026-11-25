@@ -461,7 +461,8 @@ impl OpenCode {
                 st.done = true;
                 let activity = unit.iter().map(|m| m.completed.unwrap_or(m.created)).max().unwrap_or(u.created);
                 let end = next.map_or(activity, |j| activity.min(msgs[j].created));
-                let files: BTreeSet<&String> = unit.iter().flat_map(|m| &m.files).collect();
+                // On Windows opencode 1 names a file with backslashes in the tool call and with slashes in its patch part.
+                let files: BTreeSet<String> = unit.iter().flat_map(|m| &m.files).map(|f| f.replace('\\', "/")).collect();
                 out.push(Found {
                     ts: secs(end),
                     cwd: cwd.clone(),
@@ -811,6 +812,24 @@ mod tests {
     #[test]
     fn a_turn_becomes_prompt_start_done_part_rows() {
         turn_flow(Db::rows("rows-turn"));
+    }
+
+    #[test]
+    fn a_file_named_with_either_slash_on_windows_is_one_file() {
+        let db = Db::new("windows-slashes", false);
+        history(&db);
+        let mut src = OpenCode::new(db.path.clone());
+        src.poll();
+        db.user("s1", "m3", 2_000_000, "write a hello program");
+        db.assistant("s1", "m4", 2_000_100, None);
+        db.tool("s1", "m4", 1, 2_001_000, "write", Some("D:\\w\\p\\hello.py"));
+        db.add_part("s1", "m4", 2, 2_002_000, json!({ "type": "patch", "hash": "abc", "files": ["D:/w/p/hello.py"] }));
+        db.finish("m4", 2_000_100, 2_010_000, "stop");
+        let files = src.poll().iter().find_map(|f| match f.kind {
+            Kind::ReplyDone { files_changed, .. } => Some(files_changed),
+            _ => None,
+        });
+        assert_eq!(files, Some(1));
     }
 
     #[test]

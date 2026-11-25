@@ -207,6 +207,10 @@ fn is_agent_cli<P: Procs>(p: &P, pid: u32) -> bool {
     if (name == "amp" || comm == "amp") && p.cmdline(pid).iter().take(3).any(|a| a.ends_with("plugin-runtime.ts")) {
         return false;
     }
+    // OpenCode 2 starts its background server as its own child, running in the home folder.
+    if (name == "opencode" || comm == "opencode") && p.cmdline(pid).iter().skip(1).take(3).any(|a| a == "--service") {
+        return false;
+    }
     if AGENT_CLIS.contains(&comm.as_str()) || AGENT_CLIS.contains(&name.as_str()) {
         return true;
     }
@@ -591,6 +595,20 @@ mod tests {
             .args(13, &["amp", "-m", "low"])
             .cwd(14, &plugins)
             .args(14, &["/home/a/.amp/bin/amp", "run", "/tmp/amp-plugin-runtime-2oheEi/plugin-runtime.ts", "/home/a/.config/amp/plugins/kairos.ts"]);
+        let Classified { class, project, .. } = classify_with(&f, 10, "", "");
+        assert_eq!(class, Class::AgentTerminal);
+        assert_eq!(project.unwrap().root, dir);
+    }
+
+    #[test]
+    fn the_opencode_server_under_the_cli_does_not_move_the_project() {
+        let dir = repo("opencode");
+        let home = repo("opencode-home");
+        let f = Fake::new(&[(10, 1, "kitty"), (12, 10, "bash"), (13, 12, "opencode"), (14, 13, "opencode")])
+            .cwd(13, &dir)
+            .args(13, &["/home/a/.opencode/bin/opencode"])
+            .cwd(14, &home)
+            .args(14, &["/home/a/.opencode/bin/opencode", "serve", "--service"]);
         let Classified { class, project, .. } = classify_with(&f, 10, "", "");
         assert_eq!(class, Class::AgentTerminal);
         assert_eq!(project.unwrap().root, dir);
